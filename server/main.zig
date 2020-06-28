@@ -2,6 +2,8 @@ const std = @import("std");
 usingnamespace @import("./c.zig");
 
 pub fn main() anyerror!void {
+    const allocator = std.heap.c_allocator;
+
     // Initialize enet library
     if (enet_initialize() != 0) {
         return error.ENetInitialize;
@@ -26,8 +28,13 @@ pub fn main() anyerror!void {
         switch (event.type) {
             .ENET_EVENT_TYPE_CONNECT => {
                 std.debug.warn("A new client (id={}) connected from {}:{}.\n", .{ next_client_id, event.peer.*.address.host, event.peer.*.address.port });
+
                 event.peer.*.data = @intToPtr(?*c_void, next_client_id);
-                next_client_id += 1;
+                defer next_client_id += 1;
+
+                const msg = try std.fmt.allocPrint(allocator, "{} has joined the server", .{next_client_id});
+                const packet = enet_packet_create(msg.ptr, msg.len, ENET_PACKET_FLAG_RELIABLE);
+                enet_host_broadcast(server, 0, packet);
             },
             .ENET_EVENT_TYPE_RECEIVE => {
                 defer enet_packet_destroy(event.packet);
