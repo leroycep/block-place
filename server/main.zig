@@ -38,8 +38,17 @@ pub fn main() anyerror!void {
             },
             .ENET_EVENT_TYPE_RECEIVE => {
                 defer enet_packet_destroy(event.packet);
+
                 const id = @ptrToInt(event.peer.*.data);
+                const data = event.packet.*.data[0..event.packet.*.dataLength];
+
                 std.debug.warn("A packet of length {} received from {} on channel {}.\n", .{ event.packet.*.dataLength, id, event.channelID });
+
+                if (event.channelID == 0) {
+                    const msg = try std.fmt.allocPrint(allocator, "<{}> {}", .{ id, data });
+                    const packet = enet_packet_create(msg.ptr, msg.len, ENET_PACKET_FLAG_RELIABLE);
+                    enet_host_broadcast(server, 0, packet);
+                }
             },
             .ENET_EVENT_TYPE_DISCONNECT => {
                 const id = @ptrToInt(event.peer.*.data);

@@ -117,9 +117,10 @@ pub fn main() anyerror!void {
                         pop_utf8_codepoint(&text_typed);
                         renderText = true;
                     } else if (event.key.keysym.sym == SDLK_RETURN and text_typed.len() > 0) {
-                        const new_message = try std.mem.dupe(allocator, u8, text_typed.span());
-                        const new_message_node = try message_log.createNode(new_message, allocator);
-                        message_log.prepend(new_message_node);
+                        const text = text_typed.span();
+                        const packet = enet_packet_create(text.ptr, text.len, ENET_PACKET_FLAG_RELIABLE);
+                        _ = enet_peer_send(peer, 0, packet);
+
                         try text_typed.resize(0);
                         renderText = true;
                     } else if (event.key.keysym.sym == SDLK_c and @enumToInt(SDL_GetModState()) & KMOD_CTRL > 0) {
