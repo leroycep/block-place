@@ -1,7 +1,9 @@
 const std = @import("std");
+const ArrayListSentineled = std.ArrayListSentineled;
 usingnamespace @import("./c.zig");
 
 pub fn main() anyerror!void {
+    const allocator = std.heap.c_allocator;
     if (SDL_Init(SDL_INIT_EVENTS | SDL_INIT_VIDEO) != 0) {
         return error.SDL_Init;
     }
@@ -41,6 +43,55 @@ pub fn main() anyerror!void {
         },
     );
 
+    SDL_StartTextInput();
+
+    var text_typed = try ArrayListSentineled(u8, 0).init(allocator, "Hello, world!");
+    defer text_typed.deinit();
+
+    render(window, renderer, text_typed.span());
+
+    while (true) {
+        var renderText = false;
+        var event: SDL_Event = undefined;
+        if (SDL_WaitEvent(&event) == 0) return error.SDL_Event;
+        switch (event.type) {
+            SDL_QUIT => break,
+            SDL_KEYDOWN => {
+                if (event.key.keysym.sym == SDLK_ESCAPE) {
+                    break;
+                } else if (event.key.keysym.sym == SDLK_BACKSPACE and text_typed.len() > 0) {
+                    pop_utf8_codepoint(&text_typed);
+                    renderText = true;
+                } else if (event.key.keysym.sym == SDLK_c and @enumToInt(SDL_GetModState()) & KMOD_CTRL > 0) {
+                    _ = SDL_SetClipboardText(text_typed.span());
+                } else if (event.key.keysym.sym == SDLK_v and @enumToInt(SDL_GetModState()) & KMOD_CTRL > 0) {
+                    const pasted_text = SDL_GetClipboardText();
+                    var i: usize = 0;
+                    while ((pasted_text + i).* != 0) : (i += 1) {}
+                    try text_typed.appendSlice(pasted_text[0..i]);
+                    renderText = true;
+                }
+            },
+            SDL_TEXTINPUT => {
+                if (!(@enumToInt(SDL_GetModState()) & KMOD_CTRL > 0 and (event.text.text[0] == 'c' or event.text.text[0] == 'C' or event.text.text[0] == 'v' or event.text.text[0] == 'V'))) {
+                    var i: usize = 0;
+                    while (event.text.text[i] != 0) : (i += 1) {}
+                    try text_typed.appendSlice(event.text.text[0..i]);
+                    renderText = true;
+                }
+            },
+            SDL_WINDOWEVENT => if (event.window.event == SDL_WINDOWEVENT_EXPOSED) {
+                renderText = true;
+            },
+            else => {},
+        }
+        if (renderText) {
+            render(window, renderer, text_typed.span());
+        }
+    }
+}
+
+fn render(window: *SDL_Window, renderer: PFGLRendererRef, text: [:0]const u8) void {
     const canvas = PFCanvasCreate(PFCanvasFontContextCreateWithSystemSource(), &PFVector2F{ .x = 640, .y = 480 });
 
     // Draw a house
@@ -65,23 +116,28 @@ pub fn main() anyerror!void {
     PFPathClosePath(path);
     PFCanvasStrokePath(canvas, path);
 
+    PFCanvasFillText(canvas, text, text.len, &PFVector2F{ .x = 32, .y = 48 });
+
     // Render canvas to screen
     const scene = PFCanvasCreateScene(canvas);
     const scene_proxy = PFSceneProxyCreateFromSceneAndRayonExecutor(scene, PF_RENDERER_LEVEL_D3D9);
     PFSceneProxyBuildAndRenderGL(scene_proxy, renderer, PFBuildOptionsCreate());
     SDL_GL_SwapWindow(window);
-
-    std.debug.warn("All your codebase are belong to us.\n", .{});
-
-    while (true) {
-        var event: SDL_Event = undefined;
-        if (SDL_WaitEvent(&event) == 0) return error.SDL_Event;
-        if (event.type == SDL_QUIT or (event.type == SDL_KEYDOWN and event.key.keysym.sym == SDLK_ESCAPE)) {
-            break;
-        }
-    }
 }
 
 fn LoadGLFunction(name: ?[*]const u8, userdata: ?*c_void) callconv(.C) ?*c_void {
     return SDL_GL_GetProcAddress(name);
+}
+
+fn is_leading_utf8_byte(c: u8) bool {
+    const first_bit_set = (c & 0x80) != 0;
+    const second_bit_set = (c & 0x40) != 0;
+    return !first_bit_set or second_bit_set;
+}
+
+fn pop_utf8_codepoint(string: *ArrayListSentineled(u8, 0)) void {
+    if (string.len() == 0) return;
+    var new_len = string.len() - 1;
+    while (new_len > 0 and !is_leading_utf8_byte(string.span()[new_len])) : (new_len -= 1) {}
+    string.shrink(new_len);
 }
