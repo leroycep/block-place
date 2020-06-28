@@ -110,28 +110,6 @@ pub fn main() anyerror!void {
 fn render(window: *SDL_Window, renderer: PFGLRendererRef, text: [:0]const u8, message_log: TailQueue([]const u8)) void {
     const canvas = PFCanvasCreate(PFCanvasFontContextCreateWithSystemSource(), &PFVector2F{ .x = 640, .y = 480 });
 
-    // Draw a house
-    PFCanvasSetLineWidth(canvas, 10);
-    PFCanvasStrokeRect(canvas, &PFRectF{
-        .origin = .{ .x = 75, .y = 140 },
-        .lower_right = .{ .x = 225, .y = 250 },
-    });
-    PFCanvasFillRect(canvas, &PFRectF{
-        .origin = .{ .x = 130, .y = 190 },
-        .lower_right = .{ .x = 170, .y = 250 },
-    });
-    PFCanvasFillRect(canvas, &PFRectF{
-        .origin = .{ .x = 130, .y = 190 },
-        .lower_right = .{ .x = 170, .y = 250 },
-    });
-
-    const path = PFPathCreate();
-    PFPathMoveTo(path, &PFVector2F{ .x = 50, .y = 140 });
-    PFPathLineTo(path, &PFVector2F{ .x = 150, .y = 60 });
-    PFPathLineTo(path, &PFVector2F{ .x = 250, .y = 140 });
-    PFPathClosePath(path);
-    PFCanvasStrokePath(canvas, path);
-
     var ypos: f32 = 480;
     const text_size = 20;
     PFCanvasSetFontSize(canvas, text_size);
