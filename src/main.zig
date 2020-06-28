@@ -29,6 +29,23 @@ pub fn main() anyerror!void {
 
     SDL_ShowWindow(window);
 
+    // Initialize enet library
+    if (enet_initialize() != 0) {
+        return error.EnetInitialize;
+    }
+    defer enet_deinitialize();
+
+    var client = enet_host_create(null, 1, 2, 0, 0) orelse return error.CreatingENetClientHost;
+    defer enet_host_destroy(client);
+
+    var address: ENetAddress = undefined;
+    if (enet_address_set_host(&address, "localhost") != 0) {
+        return error.ENetSetAddress;
+    }
+    address.port = 41800;
+
+    const peer = enet_host_connect(client, &address, 2, 0) orelse return error.ENetNoPeersAvailable;
+
     PFGLLoadWith(LoadGLFunction, null);
     const dest_framebuffer = PFGLDestFramebufferCreateFullWindow(&PFVector2I{ .x = 640, .y = 480 });
     const renderer = PFGLRendererCreate(
@@ -58,53 +75,100 @@ pub fn main() anyerror!void {
         }
     }
 
+    {
+        const new_message = try std.mem.dupe(allocator, u8, "Connecting to server...");
+        const new_message_node = try message_log.createNode(new_message, allocator);
+        message_log.prepend(new_message_node);
+    }
     render(window, renderer, text_typed.span(), message_log);
 
-    while (true) {
+    var running = true;
+    while (running) {
         var renderText = false;
-        var event: SDL_Event = undefined;
-        if (SDL_WaitEvent(&event) == 0) return error.SDL_Event;
-        switch (event.type) {
-            SDL_QUIT => break,
-            SDL_KEYDOWN => {
-                if (event.key.keysym.sym == SDLK_ESCAPE) {
-                    break;
-                } else if (event.key.keysym.sym == SDLK_BACKSPACE and text_typed.len() > 0) {
-                    pop_utf8_codepoint(&text_typed);
-                    renderText = true;
-                } else if (event.key.keysym.sym == SDLK_RETURN and text_typed.len() > 0) {
-                    const new_message = try std.mem.dupe(allocator, u8, text_typed.span());
+        var enet_event: ENetEvent = undefined;
+        while (enet_host_service(client, &enet_event, 0) > 0) {
+            switch (enet_event.type) {
+                .ENET_EVENT_TYPE_CONNECT => {
+                    const new_message = try std.fmt.allocPrint(allocator, "Connected to server at {}:{}", .{ enet_event.peer.*.address.host, enet_event.peer.*.address.port });
                     const new_message_node = try message_log.createNode(new_message, allocator);
                     message_log.prepend(new_message_node);
-                    try text_typed.resize(0);
                     renderText = true;
-                } else if (event.key.keysym.sym == SDLK_c and @enumToInt(SDL_GetModState()) & KMOD_CTRL > 0) {
-                    _ = SDL_SetClipboardText(text_typed.span());
-                } else if (event.key.keysym.sym == SDLK_v and @enumToInt(SDL_GetModState()) & KMOD_CTRL > 0) {
-                    const pasted_text = SDL_GetClipboardText();
-                    var i: usize = 0;
-                    while ((pasted_text + i).* != 0) : (i += 1) {}
-                    try text_typed.appendSlice(pasted_text[0..i]);
+                },
+                .ENET_EVENT_TYPE_RECEIVE => {
+                    defer enet_packet_destroy(enet_event.packet);
+                    const new_message = try std.mem.dupe(allocator, u8, enet_event.packet.*.data[0..enet_event.packet.*.dataLength]);
+                    const new_message_node = try message_log.createNode(new_message, allocator);
+                    message_log.prepend(new_message_node);
                     renderText = true;
-                }
-            },
-            SDL_TEXTINPUT => {
-                if (!(@enumToInt(SDL_GetModState()) & KMOD_CTRL > 0 and (event.text.text[0] == 'c' or event.text.text[0] == 'C' or event.text.text[0] == 'v' or event.text.text[0] == 'V'))) {
-                    var i: usize = 0;
-                    while (event.text.text[i] != 0) : (i += 1) {}
-                    try text_typed.appendSlice(event.text.text[0..i]);
+                },
+                .ENET_EVENT_TYPE_NONE => break,
+                else => {},
+            }
+        }
+
+        var event: SDL_Event = undefined;
+        while (SDL_PollEvent(&event) != 0) {
+            switch (event.type) {
+                SDL_QUIT => running = false,
+                SDL_KEYDOWN => {
+                    if (event.key.keysym.sym == SDLK_ESCAPE) {
+                        running = false;
+                    } else if (event.key.keysym.sym == SDLK_BACKSPACE and text_typed.len() > 0) {
+                        pop_utf8_codepoint(&text_typed);
+                        renderText = true;
+                    } else if (event.key.keysym.sym == SDLK_RETURN and text_typed.len() > 0) {
+                        const new_message = try std.mem.dupe(allocator, u8, text_typed.span());
+                        const new_message_node = try message_log.createNode(new_message, allocator);
+                        message_log.prepend(new_message_node);
+                        try text_typed.resize(0);
+                        renderText = true;
+                    } else if (event.key.keysym.sym == SDLK_c and @enumToInt(SDL_GetModState()) & KMOD_CTRL > 0) {
+                        _ = SDL_SetClipboardText(text_typed.span());
+                    } else if (event.key.keysym.sym == SDLK_v and @enumToInt(SDL_GetModState()) & KMOD_CTRL > 0) {
+                        const pasted_text = SDL_GetClipboardText();
+                        var i: usize = 0;
+                        while ((pasted_text + i).* != 0) : (i += 1) {}
+                        try text_typed.appendSlice(pasted_text[0..i]);
+                        renderText = true;
+                    }
+                },
+                SDL_TEXTINPUT => {
+                    if (!(@enumToInt(SDL_GetModState()) & KMOD_CTRL > 0 and (event.text.text[0] == 'c' or event.text.text[0] == 'C' or event.text.text[0] == 'v' or event.text.text[0] == 'V'))) {
+                        var i: usize = 0;
+                        while (event.text.text[i] != 0) : (i += 1) {}
+                        try text_typed.appendSlice(event.text.text[0..i]);
+                        renderText = true;
+                    }
+                },
+                SDL_WINDOWEVENT => if (event.window.event == SDL_WINDOWEVENT_EXPOSED) {
                     renderText = true;
-                }
-            },
-            SDL_WINDOWEVENT => if (event.window.event == SDL_WINDOWEVENT_EXPOSED) {
-                renderText = true;
-            },
-            else => {},
+                },
+                else => {},
+            }
         }
         if (renderText) {
             render(window, renderer, text_typed.span(), message_log);
         }
     }
+
+    enet_peer_disconnect(peer, 0);
+
+    // Wait 3 seconds for disconnect to succeed
+    var enet_event: ENetEvent = undefined;
+    while (enet_host_service(client, &enet_event, 3000) > 0) {
+        switch (enet_event.type) {
+            .ENET_EVENT_TYPE_RECEIVE => {
+                enet_packet_destroy(enet_event.packet);
+            },
+            .ENET_EVENT_TYPE_DISCONNECT => {
+                std.debug.warn("Disconnected from server.\n", .{});
+                break;
+            },
+            else => {},
+        }
+    }
+
+    enet_peer_reset(peer);
 }
 
 fn render(window: *SDL_Window, renderer: PFGLRendererRef, text: [:0]const u8, message_log: TailQueue([]const u8)) void {

@@ -8,6 +8,7 @@ pkgs.mkShell {
     pkgs.zig
     pkgs.pkg-config
     pkgs.SDL2
+    pkgs.enet
     pathfinder_c
   ];
 }
