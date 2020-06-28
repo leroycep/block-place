@@ -11,7 +11,7 @@ pub fn build(b: *Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
 
-    const exe = b.addExecutable("block-place", "src/main.zig");
+    const exe = b.addExecutable("block-place", "client/main.zig");
     exe.linkLibC();
     exe.linkSystemLibrary("pathfinder_c");
     exe.linkSystemLibrary("SDL2");
