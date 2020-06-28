@@ -1,5 +1,6 @@
 const std = @import("std");
 const ArrayListSentineled = std.ArrayListSentineled;
+const TailQueue = std.TailQueue;
 usingnamespace @import("./c.zig");
 
 pub fn main() anyerror!void {
@@ -47,8 +48,17 @@ pub fn main() anyerror!void {
 
     var text_typed = try ArrayListSentineled(u8, 0).init(allocator, "Hello, world!");
     defer text_typed.deinit();
+    var message_log = TailQueue([]const u8).init();
+    defer {
+        var it = message_log.first;
+        while (it) |node| {
+            allocator.free(node.data);
+            it = node.next;
+            message_log.destroyNode(node, allocator);
+        }
+    }
 
-    render(window, renderer, text_typed.span());
+    render(window, renderer, text_typed.span(), message_log);
 
     while (true) {
         var renderText = false;
@@ -61,6 +71,12 @@ pub fn main() anyerror!void {
                     break;
                 } else if (event.key.keysym.sym == SDLK_BACKSPACE and text_typed.len() > 0) {
                     pop_utf8_codepoint(&text_typed);
+                    renderText = true;
+                } else if (event.key.keysym.sym == SDLK_RETURN and text_typed.len() > 0) {
+                    const new_message = try std.mem.dupe(allocator, u8, text_typed.span());
+                    const new_message_node = try message_log.createNode(new_message, allocator);
+                    message_log.prepend(new_message_node);
+                    try text_typed.resize(0);
                     renderText = true;
                 } else if (event.key.keysym.sym == SDLK_c and @enumToInt(SDL_GetModState()) & KMOD_CTRL > 0) {
                     _ = SDL_SetClipboardText(text_typed.span());
@@ -86,12 +102,12 @@ pub fn main() anyerror!void {
             else => {},
         }
         if (renderText) {
-            render(window, renderer, text_typed.span());
+            render(window, renderer, text_typed.span(), message_log);
         }
     }
 }
 
-fn render(window: *SDL_Window, renderer: PFGLRendererRef, text: [:0]const u8) void {
+fn render(window: *SDL_Window, renderer: PFGLRendererRef, text: [:0]const u8, message_log: TailQueue([]const u8)) void {
     const canvas = PFCanvasCreate(PFCanvasFontContextCreateWithSystemSource(), &PFVector2F{ .x = 640, .y = 480 });
 
     // Draw a house
@@ -118,10 +134,21 @@ fn render(window: *SDL_Window, renderer: PFGLRendererRef, text: [:0]const u8) vo
 
     PFCanvasFillText(canvas, text, text.len, &PFVector2F{ .x = 32, .y = 48 });
 
+    {
+        var it = message_log.first;
+        var linenum: f32 = 0;
+        while (it) |node| : (it = node.next) {
+            PFCanvasFillText(canvas, node.data.ptr, node.data.len, &PFVector2F{ .x = 32, .y = 480 - (linenum * 20) });
+            linenum += 1;
+        }
+    }
+
     // Render canvas to screen
     const scene = PFCanvasCreateScene(canvas);
     const scene_proxy = PFSceneProxyCreateFromSceneAndRayonExecutor(scene, PF_RENDERER_LEVEL_D3D9);
-    PFSceneProxyBuildAndRenderGL(scene_proxy, renderer, PFBuildOptionsCreate());
+    const build_options = PFBuildOptionsCreate();
+    defer PFBuildOptionsDestroy(build_options);
+    PFSceneProxyBuildAndRenderGL(scene_proxy, renderer, build_options);
     SDL_GL_SwapWindow(window);
 }
 
