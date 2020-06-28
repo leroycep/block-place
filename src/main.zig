@@ -132,14 +132,19 @@ fn render(window: *SDL_Window, renderer: PFGLRendererRef, text: [:0]const u8, me
     PFPathClosePath(path);
     PFCanvasStrokePath(canvas, path);
 
-    PFCanvasFillText(canvas, text, text.len, &PFVector2F{ .x = 32, .y = 48 });
+    var ypos: f32 = 480;
+    const text_size = 20;
+    PFCanvasSetFontSize(canvas, text_size);
+    const line_height = text_size * 1.5;
+
+    ypos -= line_height;
+    PFCanvasFillText(canvas, text, text.len, &PFVector2F{ .x = 32, .y = ypos });
 
     {
         var it = message_log.first;
-        var linenum: f32 = 0;
         while (it) |node| : (it = node.next) {
-            PFCanvasFillText(canvas, node.data.ptr, node.data.len, &PFVector2F{ .x = 32, .y = 480 - (linenum * 20) });
-            linenum += 1;
+            ypos -= line_height;
+            PFCanvasFillText(canvas, node.data.ptr, node.data.len, &PFVector2F{ .x = 32, .y = ypos });
         }
     }
 
