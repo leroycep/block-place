@@ -63,7 +63,7 @@ pub fn main() anyerror!void {
 
     SDL_StartTextInput();
 
-    var text_typed = try ArrayListSentineled(u8, 0).init(allocator, "Hello, world!");
+    var text_typed = try ArrayListSentineled(u8, 0).init(allocator, "");
     defer text_typed.deinit();
     var message_log = TailQueue([]const u8).init();
     defer {
