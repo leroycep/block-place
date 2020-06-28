@@ -60,5 +60,17 @@
         "type": "tarball",
         "url": "https://github.com/NixOS/nixpkgs-channels/archive/2cd2e7267e5b9a960c2997756cb30e86f0958a6b.tar.gz",
         "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
+    },
+    "pathfinder": {
+        "branch": "master",
+        "description": "A fast, practical GPU rasterizer for fonts and vector graphics",
+        "homepage": "",
+        "owner": "servo",
+        "repo": "pathfinder",
+        "rev": "ac405fb98890fa30d2c26f0a56bec97713bf73c0",
+        "sha256": "1pv6cnyh75f1n24q8n065ra57zsni013khr9w9dn6ivf68srmp2a",
+        "type": "tarball",
+        "url": "https://github.com/servo/pathfinder/archive/ac405fb98890fa30d2c26f0a56bec97713bf73c0.tar.gz",
+        "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
     }
 }
