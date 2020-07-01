@@ -72,5 +72,18 @@
         "type": "tarball",
         "url": "https://github.com/servo/pathfinder/archive/ac405fb98890fa30d2c26f0a56bec97713bf73c0.tar.gz",
         "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
+    },
+    "wasmer": {
+        "branch": "master",
+        "description": "🚀 The leading WebAssembly Runtime supporting WASI and Emscripten",
+        "homepage": "https://wasmer.io",
+        "owner": "wasmerio",
+        "repo": "wasmer",
+        "rev": "63a2d8129c7ad5ca670d041859de45e01292dd12",
+        "sha256": "08kgxikq79adcr0r82bbqi2xaxmwnsmj421gn6f7w9d6fj8hq7zh",
+        "type": "tarball",
+        "url": "https://github.com/wasmerio/wasmer/archive/63a2d8129c7ad5ca670d041859de45e01292dd12.tar.gz",
+        "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz",
+        "version": "0.17.1"
     }
 }

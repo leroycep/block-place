@@ -1,4 +1,7 @@
-const Builder = @import("std").build.Builder;
+const std = @import("std");
+const Builder = std.build.Builder;
+const Pkg = std.build.Pkg;
+const sep_str = std.fs.path.sep_str;
 
 pub fn build(b: *Builder) void {
     // Standard target options allows the person running `zig build` to choose
@@ -11,18 +14,36 @@ pub fn build(b: *Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
 
+    const pluginOutDir = b.fmt("{}" ++ sep_str ++ "bin" ++ sep_str ++ "plugins", .{b.install_prefix});
+
+    const default_plugin = b.addStaticLibrary("default-plugin", "default-plugin/plugin.zig");
+    default_plugin.setBuildMode(b.standardReleaseOptions());
+    default_plugin.setTarget(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
+    default_plugin.setOutputDir(pluginOutDir);
+    default_plugin.install();
+
+    const wasmer_pkg = Pkg{
+        .name = "wasmer",
+        .path = "wasmer/wasmer.zig",
+    };
+
     const exe = b.addExecutable("block-place", "client/main.zig");
     exe.linkLibC();
     exe.linkSystemLibrary("pathfinder_c");
     exe.linkSystemLibrary("SDL2");
     exe.linkSystemLibrary("enet");
+    exe.linkSystemLibrary("wasmer");
+    exe.addPackage(wasmer_pkg);
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.install();
 
     const server_exe = b.addExecutable("block-place-server", "server/main.zig");
+    server_exe.step.dependOn(&default_plugin.step);
     server_exe.linkLibC();
     server_exe.linkSystemLibrary("enet");
+    server_exe.linkSystemLibrary("wasmer");
+    server_exe.addPackage(wasmer_pkg);
     server_exe.setTarget(target);
     server_exe.setBuildMode(mode);
     server_exe.install();
@@ -34,6 +55,7 @@ pub fn build(b: *Builder) void {
     run_step.dependOn(&run_cmd.step);
 
     const run_server_cmd = server_exe.run();
+    run_server_cmd.cwd = "zig-cache/bin";
     run_server_cmd.step.dependOn(b.getInstallStep());
 
     const run_server_step = b.step("run-server", "Run the server");

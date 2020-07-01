@@ -1,8 +1,45 @@
 const std = @import("std");
 usingnamespace @import("./c.zig");
+const wasmer = @import("wasmer");
+const wasmer_import_t = wasmer.wasmer_import_t;
+const wasmer_instance_t = wasmer.wasmer_instance_t;
+const wasmer_instantiate = wasmer.wasmer_instantiate;
+
+const MAX_WASM_SIZE = 10 * 1024 * 1024;
 
 pub fn main() anyerror!void {
     const allocator = std.heap.c_allocator;
+
+    std.debug.warn("Loading plugins\n", .{});
+    //var imports = [_]wasmer_import_t{};
+
+    const wasm_bytes = try std.fs.cwd().readFileAlloc(allocator, "plugins/default-plugin.wasm", MAX_WASM_SIZE);
+
+    var wasm_instance: *wasmer_instance_t = undefined;
+    const compile_result = wasmer_instantiate(&wasm_instance, wasm_bytes.ptr, @intCast(u32, wasm_bytes.len), null, 0);
+    defer wasmer.wasmer_instance_destroy(wasm_instance);
+
+    if (compile_result != .WASMER_OK) {
+        const error_len = wasmer.wasmer_last_error_length();
+        var error_str = try allocator.alloc(u8, @intCast(usize, error_len));
+        defer allocator.free(error_str);
+
+        _ = wasmer.wasmer_last_error_message(error_str.ptr, @intCast(c_int, error_str.len));
+
+        std.debug.warn("Error compiling plugin: {}\n", .{error_str});
+        return error.PluginCompile;
+    }
+
+    var params = [_]wasmer.wasmer_value_t{
+        .{ .tag = wasmer.WASM_I32, .value = .{ .I32 = 24 } },
+    };
+    var results = [_]wasmer.wasmer_value_t{
+        std.mem.zeroes(wasmer.wasmer_value_t),
+    };
+
+    const call_result = wasmer.wasmer_instance_call(wasm_instance, "add_one", &params, 1, &results, 1);
+    const response_value = results[0].value.I32;
+    std.debug.warn("add_one({}) = {}\n", .{ params[0].value.I32, response_value });
 
     // Initialize enet library
     if (enet_initialize() != 0) {
