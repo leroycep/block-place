@@ -12,5 +12,6 @@ pkgs.mkShell {
     pkgs.enet
     pathfinder_c
     wasmer_c
+    pkgs.gdb
   ];
 }
