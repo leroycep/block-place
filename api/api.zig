@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const PluginInfo = struct {
     name: []const u8,
     version: Version,
@@ -7,6 +9,10 @@ pub const Version = struct {
     major: u32,
     minor: u32,
     patch: u32,
+
+    pub fn format(self: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: var) @TypeOf(writer).Error!void {
+        return std.fmt.format(writer, "{}.{}.{}", .{ self.major, self.minor, self.patch });
+    }
 };
 
 pub fn generate_plugin_info(comptime info: PluginInfo) type {
