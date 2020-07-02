@@ -5,6 +5,9 @@ const wasmer_import_t = wasmer.wasmer_import_t;
 const wasmer_instance_t = wasmer.wasmer_instance_t;
 const wasmer_instantiate = wasmer.wasmer_instantiate;
 
+const plugin_api = @import("block-place-api");
+const PluginInfo = plugin_api.PluginInfo;
+
 const MAX_WASM_SIZE = 10 * 1024 * 1024;
 
 pub fn main() anyerror!void {
@@ -20,15 +23,14 @@ pub fn main() anyerror!void {
     defer wasmer.wasmer_instance_destroy(wasm_instance);
 
     if (compile_result != .WASMER_OK) {
-        const error_len = wasmer.wasmer_last_error_length();
-        var error_str = try allocator.alloc(u8, @intCast(usize, error_len));
-        defer allocator.free(error_str);
-
-        _ = wasmer.wasmer_last_error_message(error_str.ptr, @intCast(c_int, error_str.len));
-
-        std.debug.warn("Error compiling plugin: {}\n", .{error_str});
+        try print_wasmer_error(allocator);
         return error.PluginCompile;
     }
+
+    const plugin_info = try get_plugin_info(allocator, wasm_instance);
+    defer allocator.free(plugin_info.name);
+
+    std.debug.warn("Loading {} {}\n", .{ plugin_info.name, plugin_info.version });
 
     var params = [_]wasmer.wasmer_value_t{
         .{ .tag = wasmer.WASM_I32, .value = .{ .I32 = 24 } },
@@ -95,4 +97,78 @@ pub fn main() anyerror!void {
             else => {},
         }
     }
+}
+
+fn print_wasmer_error(allocator: *std.mem.Allocator) !void {
+    const error_len = wasmer.wasmer_last_error_length();
+    var error_str = try allocator.alloc(u8, @intCast(usize, error_len));
+    defer allocator.free(error_str);
+
+    _ = wasmer.wasmer_last_error_message(error_str.ptr, @intCast(c_int, error_str.len));
+
+    std.debug.warn("Error compiling plugin: {}\n", .{error_str});
+}
+
+fn get_plugin_info(allocator: *std.mem.Allocator, instance: *wasmer.wasmer_instance_t) !PluginInfo {
+    // Get plugin info
+    // this array should be empty, but zig doesn't like passing 0 sized arrays to c
+    var dummy_params = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
+
+    var version_major_results = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
+    var call_result = wasmer.wasmer_instance_call(instance, "plugin_info_version_major", &dummy_params, 0, &version_major_results, 1);
+
+    if (call_result != .WASMER_OK) {
+        try print_wasmer_error(allocator);
+        return error.PluginInfoVersionMajor;
+    }
+
+    var version_minor_results = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
+    call_result = wasmer.wasmer_instance_call(instance, "plugin_info_version_minor", &dummy_params, 0, &version_minor_results, 1);
+
+    if (call_result != .WASMER_OK) {
+        try print_wasmer_error(allocator);
+        return error.PluginInfoVersionMinor;
+    }
+
+    var version_patch_results = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
+    call_result = wasmer.wasmer_instance_call(instance, "plugin_info_version_patch", &dummy_params, 0, &version_patch_results, 1);
+
+    if (call_result != .WASMER_OK) {
+        try print_wasmer_error(allocator);
+        return error.PluginInfoVersionPatch;
+    }
+
+    var name_len_results = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
+    call_result = wasmer.wasmer_instance_call(instance, "plugin_info_name_len", &dummy_params, 0, &name_len_results, 1);
+
+    if (call_result != .WASMER_OK) {
+        try print_wasmer_error(allocator);
+        return error.PluginInfoNameLen;
+    }
+
+    var name_ptr_results = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
+    call_result = wasmer.wasmer_instance_call(instance, "plugin_info_name_ptr", &dummy_params, 0, &name_ptr_results, 1);
+
+    if (call_result != .WASMER_OK) {
+        try print_wasmer_error(allocator);
+        return error.PluginInfoNamePtr;
+    }
+
+    const ctx = wasmer.wasmer_instance_context_get(instance);
+    const memory = wasmer.wasmer_instance_context_memory(ctx, 0);
+    const data = wasmer.wasmer_memory_data(memory);
+
+    const name_ptr = @intCast(usize, name_ptr_results[0].value.I32);
+    const name_len = @intCast(usize, name_len_results[0].value.I32);
+
+    std.debug.warn("name (ptr, len): {}, {}\n", .{ name_ptr, name_len });
+
+    return PluginInfo{
+        .name = try std.mem.dupe(allocator, u8, data[name_ptr..name_ptr + name_len]),
+        .version = .{
+            .major = @intCast(u32, version_major_results[0].value.I32),
+            .minor = @intCast(u32, version_minor_results[0].value.I32),
+            .patch = @intCast(u32, version_patch_results[0].value.I32),
+        },
+    };
 }

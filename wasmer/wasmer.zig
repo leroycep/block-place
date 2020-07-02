@@ -474,7 +474,7 @@ pub const enum_wasmer_value_tag = extern enum(c_int) {
     _,
 };
 pub const wasmer_value_tag = u32;
-const struct_unnamed_22 = extern struct {};
+const struct_unnamed_22 = @Type(.Opaque);
 pub const wasmer_module_t = struct_unnamed_22;
 const struct_unnamed_23 = @Type(.Opaque);
 pub const wasmer_instance_t = struct_unnamed_23;
@@ -483,13 +483,13 @@ const struct_unnamed_24 = extern struct {
     bytes_len: u32,
 };
 pub const wasmer_byte_array = struct_unnamed_24;
-const struct_unnamed_25 = extern struct {};
+const struct_unnamed_25 = @Type(.Opaque);
 pub const wasmer_import_object_t = struct_unnamed_25;
-const struct_unnamed_26 = extern struct {};
+const struct_unnamed_26 = @Type(.Opaque);
 pub const wasmer_export_descriptor_t = struct_unnamed_26;
-const struct_unnamed_27 = extern struct {};
+const struct_unnamed_27 = @Type(.Opaque);
 pub const wasmer_export_descriptors_t = struct_unnamed_27;
-const struct_unnamed_28 = extern struct {};
+const struct_unnamed_28 = @Type(.Opaque);
 pub const wasmer_export_func_t = struct_unnamed_28;
 const union_unnamed_29 = extern union {
     I32: i32,
@@ -503,32 +503,32 @@ const struct_unnamed_30 = extern struct {
     value: wasmer_value,
 };
 pub const wasmer_value_t = struct_unnamed_30;
-const struct_unnamed_31 = extern struct {};
+const struct_unnamed_31 = @Type(.Opaque);
 pub const wasmer_export_t = struct_unnamed_31;
-const struct_unnamed_32 = extern struct {};
+const struct_unnamed_32 = @Type(.Opaque);
 pub const wasmer_memory_t = struct_unnamed_32;
-const struct_unnamed_33 = extern struct {};
+const struct_unnamed_33 = @Type(.Opaque);
 pub const wasmer_exports_t = struct_unnamed_33;
-const struct_unnamed_34 = extern struct {};
+const struct_unnamed_34 = @Type(.Opaque);
 pub const wasmer_global_t = struct_unnamed_34;
 const struct_unnamed_35 = extern struct {
     mutable_: bool,
     kind: wasmer_value_tag,
 };
 pub const wasmer_global_descriptor_t = struct_unnamed_35;
-const struct_unnamed_36 = extern struct {};
+const struct_unnamed_36 = @Type(.Opaque);
 pub const wasmer_import_descriptor_t = struct_unnamed_36;
-const struct_unnamed_37 = extern struct {};
+const struct_unnamed_37 = @Type(.Opaque);
 pub const wasmer_import_descriptors_t = struct_unnamed_37;
-const struct_unnamed_38 = extern struct {};
+const struct_unnamed_38 = @Type(.Opaque);
 pub const wasmer_import_func_t = struct_unnamed_38;
-const struct_unnamed_39 = extern struct {};
+const struct_unnamed_39 = @Type(.Opaque);
 pub const wasmer_table_t = struct_unnamed_39;
 const union_unnamed_40 = extern union {
-    func: [*c]const wasmer_import_func_t,
-    table: [*c]const wasmer_table_t,
-    memory: [*c]const wasmer_memory_t,
-    global: [*c]const wasmer_global_t,
+    func: *const wasmer_import_func_t,
+    table: *const wasmer_table_t,
+    memory: *const wasmer_memory_t,
+    global: *const wasmer_global_t,
 };
 pub const wasmer_import_export_value = union_unnamed_40;
 const struct_unnamed_41 = extern struct {
@@ -538,9 +538,9 @@ const struct_unnamed_41 = extern struct {
     value: wasmer_import_export_value,
 };
 pub const wasmer_import_t = struct_unnamed_41;
-const struct_unnamed_42 = extern struct {};
+const struct_unnamed_42 = @Type(.Opaque);
 pub const wasmer_import_object_iter_t = struct_unnamed_42;
-const struct_unnamed_43 = extern struct {};
+const struct_unnamed_43 = @Type(.Opaque);
 pub const wasmer_instance_context_t = struct_unnamed_43;
 const struct_unnamed_44 = extern struct {
     has_some: bool,
@@ -552,33 +552,33 @@ const struct_unnamed_45 = extern struct {
     max: wasmer_limit_option_t,
 };
 pub const wasmer_limits_t = struct_unnamed_45;
-const struct_unnamed_46 = extern struct {};
+const struct_unnamed_46 = @Type(.Opaque);
 pub const wasmer_serialized_module_t = struct_unnamed_46;
-const struct_unnamed_47 = extern struct {};
+const struct_unnamed_47 = @Type(.Opaque);
 pub const wasmer_trampoline_buffer_builder_t = struct_unnamed_47;
-const struct_unnamed_48 = extern struct {};
+const struct_unnamed_48 = @Type(.Opaque);
 pub const wasmer_trampoline_callable_t = struct_unnamed_48;
-const struct_unnamed_49 = extern struct {};
+const struct_unnamed_49 = @Type(.Opaque);
 pub const wasmer_trampoline_buffer_t = struct_unnamed_49;
-pub extern fn wasmer_compile(module: [*c][*c]wasmer_module_t, wasm_bytes: [*c]u8, wasm_bytes_len: u32) wasmer_result_t;
-pub extern fn wasmer_export_descriptor_kind(export_: [*c]wasmer_export_descriptor_t) wasmer_import_export_kind;
-pub extern fn wasmer_export_descriptor_name(export_descriptor: [*c]wasmer_export_descriptor_t) wasmer_byte_array;
-pub extern fn wasmer_export_descriptors(module: [*c]const wasmer_module_t, export_descriptors: [*c][*c]wasmer_export_descriptors_t) void;
-pub extern fn wasmer_export_descriptors_destroy(export_descriptors: [*c]wasmer_export_descriptors_t) void;
-pub extern fn wasmer_export_descriptors_get(export_descriptors: [*c]wasmer_export_descriptors_t, idx: c_int) [*c]wasmer_export_descriptor_t;
-pub extern fn wasmer_export_descriptors_len(exports: [*c]wasmer_export_descriptors_t) c_int;
+pub extern fn wasmer_compile(module: **wasmer_module_t, wasm_bytes: [*c]u8, wasm_bytes_len: u32) wasmer_result_t;
+pub extern fn wasmer_export_descriptor_kind(export_: *wasmer_export_descriptor_t) wasmer_import_export_kind;
+pub extern fn wasmer_export_descriptor_name(export_descriptor: *wasmer_export_descriptor_t) wasmer_byte_array;
+pub extern fn wasmer_export_descriptors(module: *const wasmer_module_t, export_descriptors: **wasmer_export_descriptors_t) void;
+pub extern fn wasmer_export_descriptors_destroy(export_descriptors: *wasmer_export_descriptors_t) void;
+pub extern fn wasmer_export_descriptors_get(export_descriptors: *wasmer_export_descriptors_t, idx: c_int) *wasmer_export_descriptor_t;
+pub extern fn wasmer_export_descriptors_len(exports: *wasmer_export_descriptors_t) c_int;
 pub extern fn wasmer_export_func_call(func: [*c]const wasmer_export_func_t, params: [*c]const wasmer_value_t, params_len: c_uint, results: [*c]wasmer_value_t, results_len: c_uint) wasmer_result_t;
 pub extern fn wasmer_export_func_params(func: [*c]const wasmer_export_func_t, params: [*c]wasmer_value_tag, params_len: u32) wasmer_result_t;
 pub extern fn wasmer_export_func_params_arity(func: [*c]const wasmer_export_func_t, result: [*c]u32) wasmer_result_t;
 pub extern fn wasmer_export_func_returns(func: [*c]const wasmer_export_func_t, returns: [*c]wasmer_value_tag, returns_len: u32) wasmer_result_t;
 pub extern fn wasmer_export_func_returns_arity(func: [*c]const wasmer_export_func_t, result: [*c]u32) wasmer_result_t;
-pub extern fn wasmer_export_kind(export_: [*c]wasmer_export_t) wasmer_import_export_kind;
-pub extern fn wasmer_export_name(export_: [*c]wasmer_export_t) wasmer_byte_array;
+pub extern fn wasmer_export_kind(export_: *wasmer_export_t) wasmer_import_export_kind;
+pub extern fn wasmer_export_name(export_: *wasmer_export_t) wasmer_byte_array;
 pub extern fn wasmer_export_to_func(export_: [*c]const wasmer_export_t) [*c]const wasmer_export_func_t;
 pub extern fn wasmer_export_to_memory(export_: [*c]const wasmer_export_t, memory: [*c][*c]wasmer_memory_t) wasmer_result_t;
-pub extern fn wasmer_exports_destroy(exports: [*c]wasmer_exports_t) void;
-pub extern fn wasmer_exports_get(exports: [*c]wasmer_exports_t, idx: c_int) [*c]wasmer_export_t;
-pub extern fn wasmer_exports_len(exports: [*c]wasmer_exports_t) c_int;
+pub extern fn wasmer_exports_destroy(exports: *wasmer_exports_t) void;
+pub extern fn wasmer_exports_get(exports: *wasmer_exports_t, idx: c_int) *wasmer_export_t;
+pub extern fn wasmer_exports_len(exports: *wasmer_exports_t) c_int;
 pub extern fn wasmer_global_destroy(global: [*c]wasmer_global_t) void;
 pub extern fn wasmer_global_get(global: [*c]wasmer_global_t) wasmer_value_t;
 pub extern fn wasmer_global_get_descriptor(global: [*c]wasmer_global_t) wasmer_global_descriptor_t;
@@ -609,23 +609,23 @@ pub extern fn wasmer_import_object_new() [*c]wasmer_import_object_t;
 pub extern fn wasmer_instance_call(instance: *wasmer_instance_t, name: [*c]const u8, params: [*c]const wasmer_value_t, params_len: u32, results: [*c]wasmer_value_t, results_len: u32) wasmer_result_t;
 pub extern fn wasmer_instance_context_data_get(ctx: [*c]const wasmer_instance_context_t) ?*c_void;
 pub extern fn wasmer_instance_context_data_set(instance: [*c]wasmer_instance_t, data_ptr: ?*c_void) void;
-pub extern fn wasmer_instance_context_get(instance: [*c]wasmer_instance_t) [*c]const wasmer_instance_context_t;
-pub extern fn wasmer_instance_context_memory(ctx: [*c]const wasmer_instance_context_t, _memory_idx: u32) [*c]const wasmer_memory_t;
+pub extern fn wasmer_instance_context_get(instance: *wasmer_instance_t) *const wasmer_instance_context_t;
+pub extern fn wasmer_instance_context_memory(ctx:*const wasmer_instance_context_t, _memory_idx: u32) *const wasmer_memory_t;
 pub extern fn wasmer_instance_destroy(instance: *wasmer_instance_t) void;
-pub extern fn wasmer_instance_exports(instance: [*c]wasmer_instance_t, exports: [*c][*c]wasmer_exports_t) void;
+pub extern fn wasmer_instance_exports(instance: *wasmer_instance_t, exports: **wasmer_exports_t) void;
 pub extern fn wasmer_instantiate(instance: **wasmer_instance_t, wasm_bytes: [*c]u8, wasm_bytes_len: u32, imports: [*c]wasmer_import_t, imports_len: c_int) wasmer_result_t;
 pub extern fn wasmer_last_error_length() c_int;
 pub extern fn wasmer_last_error_message(buffer: [*c]u8, length: c_int) c_int;
-pub extern fn wasmer_memory_data(memory: [*c]const wasmer_memory_t) [*c]u8;
+pub extern fn wasmer_memory_data(memory: *const wasmer_memory_t) [*c]u8;
 pub extern fn wasmer_memory_data_length(memory: [*c]const wasmer_memory_t) u32;
 pub extern fn wasmer_memory_destroy(memory: [*c]wasmer_memory_t) void;
 pub extern fn wasmer_memory_grow(memory: [*c]wasmer_memory_t, delta: u32) wasmer_result_t;
 pub extern fn wasmer_memory_length(memory: [*c]const wasmer_memory_t) u32;
 pub extern fn wasmer_memory_new(memory: [*c][*c]wasmer_memory_t, limits: wasmer_limits_t) wasmer_result_t;
 pub extern fn wasmer_module_deserialize(module: [*c][*c]wasmer_module_t, serialized_module: [*c]const wasmer_serialized_module_t) wasmer_result_t;
-pub extern fn wasmer_module_destroy(module: [*c]wasmer_module_t) void;
+pub extern fn wasmer_module_destroy(module: *wasmer_module_t) void;
 pub extern fn wasmer_module_import_instantiate(instance: [*c][*c]wasmer_instance_t, module: [*c]const wasmer_module_t, import_object: [*c]const wasmer_import_object_t) wasmer_result_t;
-pub extern fn wasmer_module_instantiate(module: [*c]const wasmer_module_t, instance: [*c][*c]wasmer_instance_t, imports: [*c]wasmer_import_t, imports_len: c_int) wasmer_result_t;
+pub extern fn wasmer_module_instantiate(module: *const wasmer_module_t, instance: **wasmer_instance_t, imports: [*c]wasmer_import_t, imports_len: c_int) wasmer_result_t;
 pub extern fn wasmer_module_serialize(serialized_module: [*c][*c]wasmer_serialized_module_t, module: [*c]const wasmer_module_t) wasmer_result_t;
 pub extern fn wasmer_serialized_module_bytes(serialized_module: [*c]const wasmer_serialized_module_t) wasmer_byte_array;
 pub extern fn wasmer_serialized_module_destroy(serialized_module: [*c]wasmer_serialized_module_t) void;

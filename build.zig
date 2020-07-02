@@ -16,7 +16,13 @@ pub fn build(b: *Builder) void {
 
     const pluginOutDir = b.fmt("{}" ++ sep_str ++ "bin" ++ sep_str ++ "plugins", .{b.install_prefix});
 
+    const plugin_api_pkg = Pkg{
+        .name = "block-place-api",
+        .path = "api/api.zig",
+    };
+
     const default_plugin = b.addStaticLibrary("default-plugin", "default-plugin/plugin.zig");
+    default_plugin.addPackage(plugin_api_pkg);
     default_plugin.setBuildMode(b.standardReleaseOptions());
     default_plugin.setTarget(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
     default_plugin.setOutputDir(pluginOutDir);
@@ -44,6 +50,7 @@ pub fn build(b: *Builder) void {
     server_exe.linkSystemLibrary("enet");
     server_exe.linkSystemLibrary("wasmer");
     server_exe.addPackage(wasmer_pkg);
+    server_exe.addPackage(plugin_api_pkg);
     server_exe.setTarget(target);
     server_exe.setBuildMode(mode);
     server_exe.install();
