@@ -617,7 +617,7 @@ pub extern fn wasmer_instantiate(instance: **wasmer_instance_t, wasm_bytes: [*c]
 pub extern fn wasmer_last_error_length() c_int;
 pub extern fn wasmer_last_error_message(buffer: [*c]u8, length: c_int) c_int;
 pub extern fn wasmer_memory_data(memory: *const wasmer_memory_t) [*c]u8;
-pub extern fn wasmer_memory_data_length(memory: [*c]const wasmer_memory_t) u32;
+pub extern fn wasmer_memory_data_length(memory: *const wasmer_memory_t) u32;
 pub extern fn wasmer_memory_destroy(memory: [*c]wasmer_memory_t) void;
 pub extern fn wasmer_memory_grow(memory: [*c]wasmer_memory_t, delta: u32) wasmer_result_t;
 pub extern fn wasmer_memory_length(memory: [*c]const wasmer_memory_t) u32;

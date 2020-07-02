@@ -111,64 +111,36 @@ fn print_wasmer_error(allocator: *std.mem.Allocator) !void {
 
 fn get_plugin_info(allocator: *std.mem.Allocator, instance: *wasmer.wasmer_instance_t) !PluginInfo {
     // Get plugin info
-    // this array should be empty, but zig doesn't like passing 0 sized arrays to c
-    var dummy_params = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
-
-    var version_major_results = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
-    var call_result = wasmer.wasmer_instance_call(instance, "plugin_info_version_major", &dummy_params, 0, &version_major_results, 1);
-
-    if (call_result != .WASMER_OK) {
-        try print_wasmer_error(allocator);
-        return error.PluginInfoVersionMajor;
-    }
-
-    var version_minor_results = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
-    call_result = wasmer.wasmer_instance_call(instance, "plugin_info_version_minor", &dummy_params, 0, &version_minor_results, 1);
-
-    if (call_result != .WASMER_OK) {
-        try print_wasmer_error(allocator);
-        return error.PluginInfoVersionMinor;
-    }
-
-    var version_patch_results = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
-    call_result = wasmer.wasmer_instance_call(instance, "plugin_info_version_patch", &dummy_params, 0, &version_patch_results, 1);
-
-    if (call_result != .WASMER_OK) {
-        try print_wasmer_error(allocator);
-        return error.PluginInfoVersionPatch;
-    }
-
-    var name_len_results = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
-    call_result = wasmer.wasmer_instance_call(instance, "plugin_info_name_len", &dummy_params, 0, &name_len_results, 1);
-
-    if (call_result != .WASMER_OK) {
-        try print_wasmer_error(allocator);
-        return error.PluginInfoNameLen;
-    }
-
-    var name_ptr_results = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
-    call_result = wasmer.wasmer_instance_call(instance, "plugin_info_name_ptr", &dummy_params, 0, &name_ptr_results, 1);
-
-    if (call_result != .WASMER_OK) {
-        try print_wasmer_error(allocator);
-        return error.PluginInfoNamePtr;
-    }
-
     const ctx = wasmer.wasmer_instance_context_get(instance);
     const memory = wasmer.wasmer_instance_context_memory(ctx, 0);
-    const data = wasmer.wasmer_memory_data(memory);
+    const data_ptr = wasmer.wasmer_memory_data(memory);
+    const data_len = wasmer.wasmer_memory_data_length(memory);
+    const data = data_ptr[0..data_len];
 
-    const name_ptr = @intCast(usize, name_ptr_results[0].value.I32);
-    const name_len = @intCast(usize, name_len_results[0].value.I32);
-
-    std.debug.warn("name (ptr, len): {}, {}\n", .{ name_ptr, name_len });
+    const name_ptr = try call_func_void_to_u32(instance, "plugin_info_name_ptr");
+    const name_len = try call_func_void_to_u32(instance, "plugin_info_name_len");
 
     return PluginInfo{
-        .name = try std.mem.dupe(allocator, u8, data[name_ptr..name_ptr + name_len]),
+        .name = try std.mem.dupe(allocator, u8, data[name_ptr .. name_ptr + name_len]),
         .version = .{
-            .major = @intCast(u32, version_major_results[0].value.I32),
-            .minor = @intCast(u32, version_minor_results[0].value.I32),
-            .patch = @intCast(u32, version_patch_results[0].value.I32),
+            .major = try call_func_void_to_u32(instance, "plugin_info_version_major"),
+            .minor = try call_func_void_to_u32(instance, "plugin_info_version_minor"),
+            .patch = try call_func_void_to_u32(instance, "plugin_info_version_patch"),
         },
     };
+}
+
+// Call a function with the signature `fn() u32`
+fn call_func_void_to_u32(instance: *wasmer.wasmer_instance_t, func_name: [:0]const u8) !u32 {
+    // this array should be empty, but zig doesn't like passing 0 sized arrays to c
+    const dummy_params = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
+    var results = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
+
+    const call_result = wasmer.wasmer_instance_call(instance, func_name, &dummy_params, 0, &results, 1);
+
+    if (call_result != .WASMER_OK) {
+        return error.WasmCall;
+    }
+
+    return @bitCast(u32, results[0].value.I32);
 }
