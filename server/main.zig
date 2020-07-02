@@ -41,23 +41,18 @@ pub fn main() anyerror!void {
     }
 
     // Get plugin info, print it out, and set the context data to the plugin info
-    var plugin_info = try get_plugin_info(allocator, wasm_instance);
+    var plugin_info = get_plugin_info(allocator, wasm_instance) catch {
+        try print_wasmer_error(allocator);
+        return error.PluginInfo;
+    };
     defer allocator.free(plugin_info.name);
 
     wasmer.wasmer_instance_context_data_set(wasm_instance, &plugin_info);
 
     std.debug.warn("Loading {} {}\n", .{ plugin_info.name, plugin_info.version });
 
-    var params = [_]wasmer.wasmer_value_t{
-        .{ .tag = wasmer.WASM_I32, .value = .{ .I32 = 24 } },
-    };
-    var results = [_]wasmer.wasmer_value_t{
-        std.mem.zeroes(wasmer.wasmer_value_t),
-    };
-
-    const call_result = wasmer.wasmer_instance_call(wasm_instance, "add_one", &params, 1, &results, 1);
-    const response_value = results[0].value.I32;
-    std.debug.warn("add_one({}) = {}\n", .{ params[0].value.I32, response_value });
+    const response_value = callFunc(wasm_instance, "add_one", .{@as(i32, 24)}, i32);
+    std.debug.warn("add_one({}) = {}\n", .{ 24, response_value });
 
     // Initialize enet library
     if (enet_initialize() != 0) {
@@ -133,32 +128,51 @@ fn get_plugin_info(allocator: *std.mem.Allocator, instance: *wasmer.wasmer_insta
     const data_len = wasmer.wasmer_memory_data_length(memory);
     const data = data_ptr[0..data_len];
 
-    const name_ptr = try call_func_void_to_u32(instance, "plugin_info_name_ptr");
-    const name_len = try call_func_void_to_u32(instance, "plugin_info_name_len");
+    const name_ptr = try callFunc(instance, "plugin_info_name_ptr", .{}, u32);
+    const name_len = try callFunc(instance, "plugin_info_name_len", .{}, u32);
 
     return PluginInfo{
         .name = try std.mem.dupe(allocator, u8, data[name_ptr .. name_ptr + name_len]),
         .version = .{
-            .major = try call_func_void_to_u32(instance, "plugin_info_version_major"),
-            .minor = try call_func_void_to_u32(instance, "plugin_info_version_minor"),
-            .patch = try call_func_void_to_u32(instance, "plugin_info_version_patch"),
+            .major = try callFunc(instance, "plugin_info_version_major", .{}, u32),
+            .minor = try callFunc(instance, "plugin_info_version_minor", .{}, u32),
+            .patch = try callFunc(instance, "plugin_info_version_patch", .{}, u32),
         },
     };
 }
 
 // Call a function with the signature `fn() u32`
-fn call_func_void_to_u32(instance: *wasmer.wasmer_instance_t, func_name: [:0]const u8) !u32 {
+fn callFunc(instance: *wasmer.wasmer_instance_t, func_name: [:0]const u8, comptime params: var, comptime return_type: type) !return_type {
     // this array should be empty, but zig doesn't like passing 0 sized arrays to c
-    const dummy_params = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
+    comptime var generated_wasmer_params: [params.len]wasmer.wasmer_value_t = undefined;
+    comptime {
+        var i = 0;
+        while (i < params.len) : (i += 1) {
+            generated_wasmer_params[i] = switch (@TypeOf(params[i])) {
+                i32 => .{ .tag = wasmer.WASM_I32, .value = .{ .I32 = params[i] } },
+                else => @compileError("Unsupported parameter type"),
+            };
+        }
+    }
+
+    var dummy_params = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
+
+    const wasmer_params: []wasmer.wasmer_value_t = if (params.len != 0) &generated_wasmer_params else &dummy_params;
+
     var results = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
 
-    const call_result = wasmer.wasmer_instance_call(instance, func_name, &dummy_params, 0, &results, 1);
+    const call_result = wasmer.wasmer_instance_call(instance, func_name, wasmer_params.ptr, @intCast(u32, params.len), &results, 1);
 
     if (call_result != .WASMER_OK) {
         return error.WasmCall;
     }
 
-    return @bitCast(u32, results[0].value.I32);
+    return switch (return_type) {
+        u32 => @bitCast(u32, results[0].value.I32),
+        i32 => results[0].value.I32,
+        void => {},
+        else => @compileError("Unsupported return type"),
+    };
 }
 
 const WASM_WARN_NAME = "warn";
