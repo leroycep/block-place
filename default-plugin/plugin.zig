@@ -10,5 +10,7 @@ usingnamespace api.generate_plugin_info(.{
 });
 
 export fn add_one(a: i32) i32 {
+    const msg = "Hello from wasm!";
+    api.warn(msg, msg.len);
     return a + 1;
 }

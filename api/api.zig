@@ -34,3 +34,5 @@ pub fn generate_plugin_info(comptime info: PluginInfo) type {
         }
     };
 }
+
+pub extern fn warn(str_ptr: [*]const u8, str_len: u32) void;

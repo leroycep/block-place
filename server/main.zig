@@ -14,12 +14,25 @@ pub fn main() anyerror!void {
     const allocator = std.heap.c_allocator;
 
     std.debug.warn("Loading plugins\n", .{});
-    //var imports = [_]wasmer_import_t{};
+
+    const env_module_name = "env";
+    const env_module_name_bytes = wasmer.wasmer_byte_array{ .bytes = env_module_name, .bytes_len = env_module_name.len };
+
+    const wasm_warn_params: []const wasmer.wasmer_value_tag = &[_]wasmer.wasmer_value_tag{ wasmer.WASM_I32, wasmer.WASM_I32 };
+    const wasm_warn_returns: []const wasmer.wasmer_value_tag = &[_]wasmer.wasmer_value_tag{};
+    const wasm_warn_import_func = wasmer.wasmer_import_func_new(@ptrCast(fn (?*c_void) callconv(.C) void, wasm_warn), wasm_warn_params.ptr, wasm_warn_params.len, wasm_warn_returns.ptr, wasm_warn_returns.len);
+
+    var imports = [_]wasmer_import_t{.{
+        .module_name = env_module_name_bytes,
+        .import_name = .{ .bytes = WASM_WARN_NAME, .bytes_len = WASM_WARN_NAME.len },
+        .tag = wasmer.WASM_FUNCTION,
+        .value = .{ .func = wasm_warn_import_func },
+    }};
 
     const wasm_bytes = try std.fs.cwd().readFileAlloc(allocator, "plugins/default-plugin.wasm", MAX_WASM_SIZE);
 
     var wasm_instance: *wasmer_instance_t = undefined;
-    const compile_result = wasmer_instantiate(&wasm_instance, wasm_bytes.ptr, @intCast(u32, wasm_bytes.len), null, 0);
+    const compile_result = wasmer_instantiate(&wasm_instance, wasm_bytes.ptr, @intCast(u32, wasm_bytes.len), &imports, imports.len);
     defer wasmer.wasmer_instance_destroy(wasm_instance);
 
     if (compile_result != .WASMER_OK) {
@@ -27,8 +40,11 @@ pub fn main() anyerror!void {
         return error.PluginCompile;
     }
 
-    const plugin_info = try get_plugin_info(allocator, wasm_instance);
+    // Get plugin info, print it out, and set the context data to the plugin info
+    var plugin_info = try get_plugin_info(allocator, wasm_instance);
     defer allocator.free(plugin_info.name);
+
+    wasmer.wasmer_instance_context_data_set(wasm_instance, &plugin_info);
 
     std.debug.warn("Loading {} {}\n", .{ plugin_info.name, plugin_info.version });
 
@@ -143,4 +159,22 @@ fn call_func_void_to_u32(instance: *wasmer.wasmer_instance_t, func_name: [:0]con
     }
 
     return @bitCast(u32, results[0].value.I32);
+}
+
+const WASM_WARN_NAME = "warn";
+
+fn wasm_warn(ctx: *wasmer.wasmer_instance_context_t, str_ptr: u32, str_len: u32) callconv(.C) void {
+    const memory = wasmer.wasmer_instance_context_memory(ctx, 0);
+    const data_ptr = wasmer.wasmer_memory_data(memory);
+    const data_len = wasmer.wasmer_memory_data_length(memory);
+    const data = data_ptr[0..data_len];
+
+    const str = data[str_ptr .. str_ptr + str_len];
+
+    if (wasmer.wasmer_instance_context_data_get(ctx)) |ctx_data_ptr| {
+        const plugin_info = @ptrCast(*PluginInfo, @alignCast(@alignOf(*PluginInfo), ctx_data_ptr));
+        std.debug.warn("[{}] {}\n", .{ plugin_info.name, str });
+    } else {
+        std.debug.warn("[UNKNOWN] {}\n", .{str});
+    }
 }

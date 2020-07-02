@@ -592,7 +592,7 @@ pub extern fn wasmer_import_descriptors_destroy(import_descriptors: [*c]wasmer_i
 pub extern fn wasmer_import_descriptors_get(import_descriptors: [*c]wasmer_import_descriptors_t, idx: c_uint) [*c]wasmer_import_descriptor_t;
 pub extern fn wasmer_import_descriptors_len(exports: [*c]wasmer_import_descriptors_t) c_uint;
 pub extern fn wasmer_import_func_destroy(func: [*c]wasmer_import_func_t) void;
-pub extern fn wasmer_import_func_new(func: ?fn (?*c_void) callconv(.C) void, params: [*c]const wasmer_value_tag, params_len: c_uint, returns: [*c]const wasmer_value_tag, returns_len: c_uint) [*c]wasmer_import_func_t;
+pub extern fn wasmer_import_func_new(func: ?fn (?*c_void) callconv(.C) void, params: [*c]const wasmer_value_tag, params_len: c_uint, returns: [*c]const wasmer_value_tag, returns_len: c_uint) *wasmer_import_func_t;
 pub extern fn wasmer_import_func_params(func: [*c]const wasmer_import_func_t, params: [*c]wasmer_value_tag, params_len: c_uint) wasmer_result_t;
 pub extern fn wasmer_import_func_params_arity(func: [*c]const wasmer_import_func_t, result: [*c]u32) wasmer_result_t;
 pub extern fn wasmer_import_func_returns(func: [*c]const wasmer_import_func_t, returns: [*c]wasmer_value_tag, returns_len: c_uint) wasmer_result_t;
@@ -607,8 +607,8 @@ pub extern fn wasmer_import_object_iter_next(import_object_iter: [*c]wasmer_impo
 pub extern fn wasmer_import_object_iterate_functions(import_object: [*c]const wasmer_import_object_t) [*c]wasmer_import_object_iter_t;
 pub extern fn wasmer_import_object_new() [*c]wasmer_import_object_t;
 pub extern fn wasmer_instance_call(instance: *wasmer_instance_t, name: [*c]const u8, params: [*c]const wasmer_value_t, params_len: u32, results: [*c]wasmer_value_t, results_len: u32) wasmer_result_t;
-pub extern fn wasmer_instance_context_data_get(ctx: [*c]const wasmer_instance_context_t) ?*c_void;
-pub extern fn wasmer_instance_context_data_set(instance: [*c]wasmer_instance_t, data_ptr: ?*c_void) void;
+pub extern fn wasmer_instance_context_data_get(ctx: *const wasmer_instance_context_t) ?*c_void;
+pub extern fn wasmer_instance_context_data_set(instance: *wasmer_instance_t, data_ptr: ?*c_void) void;
 pub extern fn wasmer_instance_context_get(instance: *wasmer_instance_t) *const wasmer_instance_context_t;
 pub extern fn wasmer_instance_context_memory(ctx:*const wasmer_instance_context_t, _memory_idx: u32) *const wasmer_memory_t;
 pub extern fn wasmer_instance_destroy(instance: *wasmer_instance_t) void;
