@@ -29,10 +29,8 @@ pub fn main() anyerror!void {
     const module = module_opt.?;
 
     // define env::warn
-    const warn_func_type = wasm_functype_new_2_0(wasm_valtype_new_i32(), wasm_valtype_new_i32());
-    const warn_func = wasmtime_func_new(store, warn_func_type, warn_callback);
-    const warn_func_extern = wasm_func_as_extern(warn_func) orelse return error.FuncAsExtern;
-    try linker_define(linker, "env", "warn", warn_func_extern);
+    const warn_func = try create_wasm_func(store, &[_]ValKind{ .i32, .i32 }, &[_]ValKind{}, warn_callback);
+    try linker_define(linker, "env", "warn", warn_func);
 
     var trap: ?*wasm_trap_t = null;
     var instance_opt: ?*wasm_instance_t = null;
@@ -250,6 +248,8 @@ fn read_global_u32(memory: []const u8, ext: *wasm_extern_t) !u32 {
     return std.mem.readIntNative(u32, memory[ptr..][0..4]);
 }
 
+const WasmCallback = fn (caller: ?*const wasmtime_caller_t, args: ?[*]const wasm_val_t, results: ?[*]wasm_val_t) callconv(.C) ?*wasm_trap_t;
+
 fn warn_callback(caller: ?*const wasmtime_caller_t, args: ?[*]const wasm_val_t, results: ?[*]wasm_val_t) callconv(.C) ?*wasm_trap_t {
     const mem_extern = wasmtime_caller_export_get(caller, &to_byte_vec("memory"));
     const memory = wasm_extern_as_memory(mem_extern);
@@ -290,4 +290,36 @@ fn linker_define(linker: *wasmtime_linker_t, module: [:0]const u8, name: [:0]con
 
         return error.WasmLinker;
     }
+}
+
+const ValKind = enum(u8) {
+    i32 = WASM_I32,
+    i64 = WASM_I64,
+    f32 = WASM_F32,
+    f64 = WASM_F64,
+    AnyRef = WASM_ANYREF,
+    FuncRef = WASM_FUNCREF,
+    _,
+};
+
+fn create_wasm_func(store: *wasm_store_t, params: []const ValKind, results: []const ValKind, callback: WasmCallback) !*wasm_extern_t {
+    var params_vec: wasm_valtype_vec_t = undefined;
+    wasm_valtype_vec_new_uninitialized(&params_vec, params.len);
+    defer wasm_valtype_vec_delete(&params_vec);
+    for (params) |param_kind, idx| {
+        params_vec.data[idx] = wasm_valtype_new(@enumToInt(param_kind));
+    }
+
+    var results_vec: wasm_valtype_vec_t = undefined;
+    wasm_valtype_vec_new_uninitialized(&results_vec, results.len);
+    defer wasm_valtype_vec_delete(&results_vec);
+    for (results) |result_kind, idx| {
+        results_vec.data[idx] = wasm_valtype_new(@enumToInt(result_kind));
+    }
+
+    const func_type = wasm_functype_new(&params_vec, &results_vec);
+    const func = wasmtime_func_new(store, func_type, callback);
+    return wasm_func_as_extern(func) orelse {
+        return error.FuncAsExtern;
+    };
 }
