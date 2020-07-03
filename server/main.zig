@@ -283,8 +283,6 @@ fn warn_callback(caller: ?*const wasmtime_caller_t, args: ?[*]const wasm_val_t, 
 
 fn to_byte_vec(slice: [:0]const u8) wasm_byte_vec_t {
     var vec: wasm_byte_vec_t = undefined;
-    wasm_name_new_from_string(&vec, slice);
-    // For some reason the function includes the null byte
-    vec.size -= 1;
+    wasm_byte_vec_new(&vec, slice.len, slice.ptr);
     return vec;
 }
