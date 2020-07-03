@@ -12,7 +12,7 @@ pub fn main() anyerror!void {
     const store = wasm_store_new(engine) orelse return error.WasmStore;
     defer wasm_store_delete(store);
 
-    const linker = wasmtime_linker_new(store);
+    const linker = wasmtime_linker_new(store) orelse return error.WasmtimeLinker;
     defer wasmtime_linker_delete(linker);
 
     std.debug.warn("Loading plugins\n", .{});
@@ -28,25 +28,11 @@ pub fn main() anyerror!void {
     defer wasm_module_delete(module_opt);
     const module = module_opt.?;
 
-    {
-        const warn_func_type = wasm_functype_new_2_0(wasm_valtype_new_i32(), wasm_valtype_new_i32());
-        const warn_func = wasmtime_func_new(store, warn_func_type, warn_callback);
-        const warn_func_extern = wasm_func_as_extern(warn_func);
-
-        var module_name = to_byte_vec("env");
-        defer wasm_byte_vec_delete(&module_name);
-
-        var warn_func_name = to_byte_vec("warn");
-        defer wasm_byte_vec_delete(&module_name);
-
-        if (wasmtime_linker_define(linker, &module_name, &warn_func_name, warn_func_extern)) |err| {
-            var message: wasm_name_t = undefined;
-            wasmtime_error_message(err, &message);
-            const message_slice = message.data[0..message.size];
-            std.debug.warn("Wasm error: {}\n", .{message_slice});
-            return error.WasmLinker;
-        }
-    }
+    // define env::warn
+    const warn_func_type = wasm_functype_new_2_0(wasm_valtype_new_i32(), wasm_valtype_new_i32());
+    const warn_func = wasmtime_func_new(store, warn_func_type, warn_callback);
+    const warn_func_extern = wasm_func_as_extern(warn_func) orelse return error.FuncAsExtern;
+    try linker_define(linker, "env", "warn", warn_func_extern);
 
     var trap: ?*wasm_trap_t = null;
     var instance_opt: ?*wasm_instance_t = null;
@@ -285,4 +271,23 @@ fn to_byte_vec(slice: [:0]const u8) wasm_byte_vec_t {
     var vec: wasm_byte_vec_t = undefined;
     wasm_byte_vec_new(&vec, slice.len, slice.ptr);
     return vec;
+}
+
+fn linker_define(linker: *wasmtime_linker_t, module: [:0]const u8, name: [:0]const u8, item: *const wasm_extern_t) !void {
+    var module_bytes = to_byte_vec(module);
+    defer wasm_byte_vec_delete(&module_bytes);
+
+    var name_bytes = to_byte_vec(name);
+    defer wasm_byte_vec_delete(&name_bytes);
+
+    if (wasmtime_linker_define(linker, &module_bytes, &name_bytes, item)) |err| {
+        var message: wasm_name_t = undefined;
+        wasmtime_error_message(err, &message);
+        defer wasm_byte_vec_delete(&message);
+
+        const message_slice = message.data[0..message.size];
+        std.debug.warn("Wasm error: {}\n", .{message_slice});
+
+        return error.WasmLinker;
+    }
 }
