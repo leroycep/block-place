@@ -19,6 +19,8 @@ pub fn generate_plugin_info(comptime info: PluginInfo) type {
     return struct {
         pub const PLUGIN_INFO = info;
 
+        export const PLUGIN_INFO_VERSION_MAJOR = info.version.major;
+
         export fn plugin_info_name_ptr() [*]const u8 {
             return info.name.ptr;
         }

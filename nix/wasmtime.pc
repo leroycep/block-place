@@ -1,0 +1,11 @@
+prefix=TEMPLATE_PREFIX
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: TEMPLATE_NAME
+Description: 
+Version: TEMPLATE_VERSION
+Libs: -L${libdir} -lTEMPLATE_NAME
+Cflags: -I${includedir}
+Libs.private: -ldl -lrt -lpthread -lgcc_s -lc -lm -lrt -lpthread -lutil -lutil

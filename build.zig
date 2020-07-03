@@ -28,18 +28,12 @@ pub fn build(b: *Builder) void {
     default_plugin.setOutputDir(pluginOutDir);
     default_plugin.install();
 
-    const wasmer_pkg = Pkg{
-        .name = "wasmer",
-        .path = "wasmer/wasmer.zig",
-    };
-
     const exe = b.addExecutable("block-place", "client/main.zig");
     exe.linkLibC();
     exe.linkSystemLibrary("pathfinder_c");
     exe.linkSystemLibrary("SDL2");
     exe.linkSystemLibrary("enet");
-    exe.linkSystemLibrary("wasmer");
-    exe.addPackage(wasmer_pkg);
+    exe.linkSystemLibrary("wasmtime");
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.install();
@@ -48,9 +42,7 @@ pub fn build(b: *Builder) void {
     server_exe.step.dependOn(&default_plugin.step);
     server_exe.linkLibC();
     server_exe.linkSystemLibrary("enet");
-    server_exe.linkSystemLibrary("wasmer");
-    server_exe.addPackage(wasmer_pkg);
-    server_exe.addPackage(plugin_api_pkg);
+    server_exe.linkSystemLibrary("wasmtime");
     server_exe.setTarget(target);
     server_exe.setBuildMode(mode);
     server_exe.install();

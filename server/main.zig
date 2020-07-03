@@ -1,58 +1,78 @@
 const std = @import("std");
 usingnamespace @import("./c.zig");
-const wasmer = @import("wasmer");
-const wasmer_import_t = wasmer.wasmer_import_t;
-const wasmer_instance_t = wasmer.wasmer_instance_t;
-const wasmer_instantiate = wasmer.wasmer_instantiate;
-
-const plugin_api = @import("block-place-api");
-const PluginInfo = plugin_api.PluginInfo;
 
 const MAX_WASM_SIZE = 10 * 1024 * 1024;
 
 pub fn main() anyerror!void {
     const allocator = std.heap.c_allocator;
 
+    const engine = wasm_engine_new() orelse return error.WasmEngine;
+    defer wasm_engine_delete(engine);
+
+    const store = wasm_store_new(engine) orelse return error.WasmStore;
+    defer wasm_store_delete(store);
+
+    const linker = wasmtime_linker_new(store);
+    defer wasmtime_linker_delete(linker);
+
     std.debug.warn("Loading plugins\n", .{});
 
-    const env_module_name = "env";
-    const env_module_name_bytes = wasmer.wasmer_byte_array{ .bytes = env_module_name, .bytes_len = env_module_name.len };
+    const wasm_byte_slice = try std.fs.cwd().readFileAlloc(allocator, "plugins/default-plugin.wasm", MAX_WASM_SIZE);
+    defer allocator.free(wasm_byte_slice);
+    const wasm_bytes = wasm_byte_vec_t{ .data = wasm_byte_slice.ptr, .size = wasm_byte_slice.len };
 
-    const wasm_warn_params: []const wasmer.wasmer_value_tag = &[_]wasmer.wasmer_value_tag{ wasmer.WASM_I32, wasmer.WASM_I32 };
-    const wasm_warn_returns: []const wasmer.wasmer_value_tag = &[_]wasmer.wasmer_value_tag{};
-    const wasm_warn_import_func = wasmer.wasmer_import_func_new(@ptrCast(fn (?*c_void) callconv(.C) void, wasm_warn), wasm_warn_params.ptr, wasm_warn_params.len, wasm_warn_returns.ptr, wasm_warn_returns.len);
+    var module_opt: ?*wasm_module_t = null;
+    if (wasmtime_module_new(store, &wasm_bytes, &module_opt)) |err| {
+        return error.WasmCompile;
+    }
+    defer wasm_module_delete(module_opt);
+    const module = module_opt.?;
 
-    var imports = [_]wasmer_import_t{.{
-        .module_name = env_module_name_bytes,
-        .import_name = .{ .bytes = WASM_WARN_NAME, .bytes_len = WASM_WARN_NAME.len },
-        .tag = wasmer.WASM_FUNCTION,
-        .value = .{ .func = wasm_warn_import_func },
-    }};
+    {
+        const warn_func_type = wasm_functype_new_2_0(wasm_valtype_new_i32(), wasm_valtype_new_i32());
+        const warn_func = wasmtime_func_new(store, warn_func_type, warn_callback);
+        const warn_func_extern = wasm_func_as_extern(warn_func);
 
-    const wasm_bytes = try std.fs.cwd().readFileAlloc(allocator, "plugins/default-plugin.wasm", MAX_WASM_SIZE);
+        var module_name = to_byte_vec("env");
+        defer wasm_byte_vec_delete(&module_name);
 
-    var wasm_instance: *wasmer_instance_t = undefined;
-    const compile_result = wasmer_instantiate(&wasm_instance, wasm_bytes.ptr, @intCast(u32, wasm_bytes.len), &imports, imports.len);
-    defer wasmer.wasmer_instance_destroy(wasm_instance);
+        var warn_func_name = to_byte_vec("warn");
+        defer wasm_byte_vec_delete(&module_name);
 
-    if (compile_result != .WASMER_OK) {
-        try print_wasmer_error(allocator);
-        return error.PluginCompile;
+        if (wasmtime_linker_define(linker, &module_name, &warn_func_name, warn_func_extern)) |err| {
+            var message: wasm_name_t = undefined;
+            wasmtime_error_message(err, &message);
+            const message_slice = message.data[0..message.size];
+            std.debug.warn("Wasm error: {}\n", .{message_slice});
+            return error.WasmLinker;
+        }
     }
 
-    // Get plugin info, print it out, and set the context data to the plugin info
-    var plugin_info = get_plugin_info(allocator, wasm_instance) catch {
-        try print_wasmer_error(allocator);
-        return error.PluginInfo;
-    };
-    defer allocator.free(plugin_info.name);
+    var trap: ?*wasm_trap_t = null;
+    var instance_opt: ?*wasm_instance_t = null;
+    if (wasmtime_linker_instantiate(linker, module, &instance_opt, &trap)) |err| {
+        var message: wasm_name_t = undefined;
+        wasmtime_error_message(err, &message);
+        const message_slice = message.data[0..message.size];
+        std.debug.warn("Wasm error: {}\n", .{message_slice});
+        return error.WasmInstantiate;
+    }
+    const instance = instance_opt.?;
 
-    wasmer.wasmer_instance_context_data_set(wasm_instance, &plugin_info);
+    const plugin = try get_plugin(allocator, module, instance);
+    defer plugin.deinit(allocator);
 
-    std.debug.warn("Loading {} {}\n", .{ plugin_info.name, plugin_info.version });
+    std.debug.warn("Loading plugin \"{}\" version {}\n", .{ plugin.name, plugin.version });
 
-    const response_value = callFunc(wasm_instance, "add_one", .{@as(i32, 24)}, i32);
-    std.debug.warn("add_one({}) = {}\n", .{ 24, response_value });
+    std.debug.warn("Calling wasm function `add_one`\n", .{});
+
+    const add_one_params = [_]wasm_val_t{.{ .kind = WASM_I32, .of = .{ .i32 = 24 } }};
+    var add_one_results = [_]wasm_val_t{std.mem.zeroes(wasm_val_t)};
+    if (wasmtime_func_call(plugin.add_one_fn, &add_one_params, add_one_params.len, &add_one_results, add_one_results.len, &trap)) |err| {
+        return error.WasmCallAddOne;
+    }
+
+    std.debug.warn("add_one({}) = {}\n", .{ add_one_params[0].of.i32, add_one_results[0].of.i32 });
 
     // Initialize enet library
     if (enet_initialize() != 0) {
@@ -120,75 +140,151 @@ fn print_wasmer_error(allocator: *std.mem.Allocator) !void {
     std.debug.warn("Error compiling plugin: {}\n", .{error_str});
 }
 
-fn get_plugin_info(allocator: *std.mem.Allocator, instance: *wasmer.wasmer_instance_t) !PluginInfo {
-    // Get plugin info
-    const ctx = wasmer.wasmer_instance_context_get(instance);
-    const memory = wasmer.wasmer_instance_context_memory(ctx, 0);
-    const data_ptr = wasmer.wasmer_memory_data(memory);
-    const data_len = wasmer.wasmer_memory_data_length(memory);
-    const data = data_ptr[0..data_len];
+const Plugin = struct {
+    name: []const u8,
+    version: struct {
+        major: u32,
+        minor: u32,
+        patch: u32,
 
-    const name_ptr = try callFunc(instance, "plugin_info_name_ptr", .{}, u32);
-    const name_len = try callFunc(instance, "plugin_info_name_len", .{}, u32);
+        pub fn format(self: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: var) @TypeOf(writer).Error!void {
+            return std.fmt.format(writer, "{}.{}.{}", .{ self.major, self.minor, self.patch });
+        }
+    },
+    add_one_fn: *wasm_func_t,
 
-    return PluginInfo{
-        .name = try std.mem.dupe(allocator, u8, data[name_ptr .. name_ptr + name_len]),
-        .version = .{
-            .major = try callFunc(instance, "plugin_info_version_major", .{}, u32),
-            .minor = try callFunc(instance, "plugin_info_version_minor", .{}, u32),
-            .patch = try callFunc(instance, "plugin_info_version_patch", .{}, u32),
-        },
-    };
-}
+    fn deinit(self: @This(), allocator: *std.mem.Allocator) void {
+        allocator.free(self.name);
+    }
+};
 
-// Call a function with the signature `fn() u32`
-fn callFunc(instance: *wasmer.wasmer_instance_t, func_name: [:0]const u8, comptime params: var, comptime return_type: type) !return_type {
-    // this array should be empty, but zig doesn't like passing 0 sized arrays to c
-    comptime var generated_wasmer_params: [params.len]wasmer.wasmer_value_t = undefined;
-    comptime {
-        var i = 0;
-        while (i < params.len) : (i += 1) {
-            generated_wasmer_params[i] = switch (@TypeOf(params[i])) {
-                i32 => .{ .tag = wasmer.WASM_I32, .value = .{ .I32 = params[i] } },
-                else => @compileError("Unsupported parameter type"),
-            };
+fn get_plugin(allocator: *std.mem.Allocator, module: *wasm_module_t, instance: *wasm_instance_t) !Plugin {
+    var memory_idx_opt: ?usize = null;
+    var plugin_info_name_idx_opt: ?usize = null;
+    var plugin_info_version_major_idx_opt: ?usize = null;
+    var plugin_info_version_minor_idx_opt: ?usize = null;
+    var plugin_info_version_patch_idx_opt: ?usize = null;
+    var add_one_func_idx_opt: ?usize = null;
+
+    {
+        var exports: wasm_exporttype_vec_t = undefined;
+        defer wasm_exporttype_vec_delete(&exports);
+        wasm_module_exports(module, &exports);
+        const exports_slice = exports.data[0..exports.size];
+        for (exports_slice) |exp, idx| {
+            const export_name_bytes = wasm_exporttype_name(exp);
+            const export_name = export_name_bytes.*.data[0..export_name_bytes.*.size];
+            const export_externtype = wasm_exporttype_type(exp);
+            const export_externtype_kind = wasm_externtype_kind(export_externtype);
+            const kind = @intToEnum(wasm_externkind_enum, export_externtype_kind);
+
+            if (std.mem.eql(u8, export_name, "add_one")) {
+                if (kind != .WASM_EXTERN_FUNC) {
+                    return error.InvalidFormat; // add_one must be a function
+                }
+                add_one_func_idx_opt = idx;
+            } else if (std.mem.eql(u8, export_name, "memory")) {
+                if (kind != .WASM_EXTERN_MEMORY) {
+                    return error.InvalidFormat; // "memory" must be memory
+                }
+                memory_idx_opt = idx;
+            } else if (std.mem.eql(u8, export_name, "PLUGIN_INFO_NAME")) {
+                if (kind != .WASM_EXTERN_GLOBAL) {
+                    return error.InvalidFormat; // plugin info name must be a global
+                }
+                plugin_info_name_idx_opt = idx;
+            } else if (std.mem.eql(u8, export_name, "PLUGIN_INFO_VERSION_MAJOR")) {
+                if (kind != .WASM_EXTERN_GLOBAL) {
+                    return error.InvalidFormat; // plugin info version major must be a global
+                }
+                plugin_info_version_major_idx_opt = idx;
+            } else if (std.mem.eql(u8, export_name, "PLUGIN_INFO_VERSION_MINOR")) {
+                if (kind != .WASM_EXTERN_GLOBAL) {
+                    return error.InvalidFormat; // plugin info version minor must be a global
+                }
+                plugin_info_version_minor_idx_opt = idx;
+            } else if (std.mem.eql(u8, export_name, "PLUGIN_INFO_VERSION_PATCH")) {
+                if (kind != .WASM_EXTERN_GLOBAL) {
+                    return error.InvalidFormat; // plugin info version patch must be a global
+                }
+                plugin_info_version_patch_idx_opt = idx;
+            }
         }
     }
 
-    var dummy_params = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
+    const memory_idx = memory_idx_opt orelse return error.InvalidFormat;
+    const plugin_info_name_idx = plugin_info_name_idx_opt orelse return error.InvalidFormat;
+    const plugin_info_version_major_idx = plugin_info_version_major_idx_opt orelse return error.InvalidFormat;
+    const plugin_info_version_minor_idx = plugin_info_version_minor_idx_opt orelse return error.InvalidFormat;
+    const plugin_info_version_patch_idx = plugin_info_version_patch_idx_opt orelse return error.InvalidFormat;
+    const add_one_func_idx = add_one_func_idx_opt orelse return error.InvalidFormat;
 
-    const wasmer_params: []wasmer.wasmer_value_t = if (params.len != 0) &generated_wasmer_params else &dummy_params;
+    var externs_vec: wasm_extern_vec_t = undefined;
+    wasm_instance_exports(instance, &externs_vec);
+    defer wasm_extern_vec_delete(&externs_vec);
 
-    var results = [_]wasmer.wasmer_value_t{std.mem.zeroes(wasmer.wasmer_value_t)};
+    const externs = externs_vec.data[0..externs_vec.size];
 
-    const call_result = wasmer.wasmer_instance_call(instance, func_name, wasmer_params.ptr, @intCast(u32, params.len), &results, 1);
+    const memory_struct = wasm_extern_as_memory(externs[memory_idx]) orelse return error.WasmMemoryNotFirstExport;
+    const memory_ptr = wasm_memory_data(memory_struct);
+    const memory_len = wasm_memory_data_size(memory_struct);
+    const memory = memory_ptr[0..memory_len];
 
-    if (call_result != .WASMER_OK) {
-        return error.WasmCall;
-    }
-
-    return switch (return_type) {
-        u32 => @bitCast(u32, results[0].value.I32),
-        i32 => results[0].value.I32,
-        void => {},
-        else => @compileError("Unsupported return type"),
+    return Plugin{
+        .name = try std.mem.dupe(allocator, u8, try read_global_cstr(memory, externs[plugin_info_name_idx].?)),
+        .version = .{
+            .major = try read_global_u32(memory, externs[plugin_info_version_major_idx].?),
+            .minor = try read_global_u32(memory, externs[plugin_info_version_minor_idx].?),
+            .patch = try read_global_u32(memory, externs[plugin_info_version_patch_idx].?),
+        },
+        .add_one_fn = wasm_extern_as_func(externs[add_one_func_idx]).?,
     };
 }
 
-const WASM_WARN_NAME = "warn";
+fn read_global_cstr(memory: []const u8, ext: *wasm_extern_t) ![]const u8 {
+    var val: wasm_val_t = undefined;
+    const global = wasm_extern_as_global(ext);
+    wasm_global_get(global, &val);
+    std.debug.assert(val.kind == WASM_I32);
 
-fn wasm_warn(ctx: *wasmer.wasmer_instance_context_t, str_ptr: u32, str_len: u32) callconv(.C) void {
-    const memory = wasmer.wasmer_instance_context_memory(ctx, 0);
-    const data_ptr = wasmer.wasmer_memory_data(memory);
-    const data_len = wasmer.wasmer_memory_data_length(memory);
+    const ptr = @bitCast(u32, val.of.i32);
+    const start = std.mem.readIntNative(u32, memory[ptr..][0..4]);
+
+    const len = std.mem.indexOf(u8, memory[start..], "\x00") orelse return error.InvalidCStr;
+
+    return memory[start .. start + len];
+}
+
+fn read_global_u32(memory: []const u8, ext: *wasm_extern_t) !u32 {
+    var val: wasm_val_t = undefined;
+    const global = wasm_extern_as_global(ext) orelse return error.ExternNotGlobal;
+    wasm_global_get(global, &val);
+    std.debug.assert(val.kind == WASM_I32);
+    const ptr = @bitCast(u32, val.of.i32);
+    return std.mem.readIntNative(u32, memory[ptr..][0..4]);
+}
+
+fn warn_callback(caller: ?*const wasmtime_caller_t, args: ?[*]const wasm_val_t, results: ?[*]wasm_val_t) callconv(.C) ?*wasm_trap_t {
+    const mem_extern = wasmtime_caller_export_get(caller, &to_byte_vec("memory"));
+    const memory = wasm_extern_as_memory(mem_extern);
+    const data_ptr = wasm_memory_data(memory);
+    const data_len = wasm_memory_data_size(memory);
     const data = data_ptr[0..data_len];
+
+    const str_ptr = @bitCast(u32, args.?[0].of.i32);
+    const str_len = @bitCast(u32, args.?[1].of.i32);
 
     const str = data[str_ptr .. str_ptr + str_len];
 
-    if (wasmer.wasmer_instance_context_data_get(ctx)) |ctx_data_ptr| {
-        const plugin_info = @ptrCast(*PluginInfo, @alignCast(@alignOf(*PluginInfo), ctx_data_ptr));
-        std.debug.warn("[{}] {}\n", .{ plugin_info.name, str });
-    } else {
-        std.debug.warn("[UNKNOWN] {}\n", .{str});
-    }
+    std.debug.warn("{}", .{str});
+
+    return null;
+}
+
+fn to_byte_vec(slice: [:0]const u8) wasm_byte_vec_t {
+    var vec: wasm_byte_vec_t = undefined;
+    wasm_name_new_from_string(&vec, slice);
+    // For some reason the function includes the null byte
+    vec.size -= 1;
+    return vec;
 }
