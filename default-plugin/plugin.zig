@@ -16,13 +16,6 @@ export fn realloc(old_ptr: [*]u8, old_len: usize, new_byte_count: usize) ?[*]u8 
     return new_mem.ptr;
 }
 
-export fn greeting(name_ptr: [*]u8, name_len: usize) void {
-    const name = name_ptr[0..name_len];
-    const msg = std.fmt.allocPrint(allocator, "Hello, {}!\n", .{name}) catch return;
-    defer allocator.free(msg);
-    api.warn(msg.ptr, msg.len);
-}
-
 export fn on_enable(plugin: *api.Plugin) void {
     api.register_player_join_listener(plugin, on_player_join);
 }

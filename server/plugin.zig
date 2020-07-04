@@ -19,7 +19,6 @@ pub const Plugin = struct {
     callback_table: *wasm_table_t,
     on_enable_fn: *wasm_func_t,
     realloc_fn: *wasm_func_t,
-    greeting_fn: *wasm_func_t,
 
     pub fn from_module_and_instance(allocator: *std.mem.Allocator, module: *wasm_module_t, instance: *wasm_instance_t) !Plugin {
         var memory_idx_opt: ?usize = null;
@@ -30,7 +29,6 @@ pub const Plugin = struct {
         var plugin_info_version_patch_idx_opt: ?usize = null;
         var on_enable_func_idx_opt: ?usize = null;
         var realloc_fn_idx_opt: ?usize = null;
-        var greeting_fn_idx_opt: ?usize = null;
 
         {
             var exports: wasm_exporttype_vec_t = undefined;
@@ -84,11 +82,6 @@ pub const Plugin = struct {
                         return error.InvalidFormat; // realloc must be a function
                     }
                     realloc_fn_idx_opt = idx;
-                } else if (std.mem.eql(u8, export_name, "greeting")) {
-                    if (kind != .WASM_EXTERN_FUNC) {
-                        return error.InvalidFormat; // realloc must be a function
-                    }
-                    greeting_fn_idx_opt = idx;
                 } else {
                     std.debug.warn("Unknown export: {}\n", .{export_name});
                 }
@@ -103,7 +96,6 @@ pub const Plugin = struct {
         const plugin_info_version_patch_idx = plugin_info_version_patch_idx_opt orelse return error.InvalidFormat;
         const on_enable_func_idx = on_enable_func_idx_opt orelse return error.InvalidFormat;
         const realloc_fn_idx = realloc_fn_idx_opt orelse return error.InvalidFormat;
-        const greeting_fn_idx = greeting_fn_idx_opt orelse return error.InvalidFormat;
 
         var externs_vec: wasm_extern_vec_t = undefined;
         wasm_instance_exports(instance, &externs_vec);
@@ -128,7 +120,6 @@ pub const Plugin = struct {
             .callback_table = wasm_extern_as_table(externs[table_idx]) orelse return error.CallbackTableCastError,
             .on_enable_fn = wasm_extern_as_func(externs[on_enable_func_idx]).?,
             .realloc_fn = wasm_extern_as_func(externs[realloc_fn_idx]).?,
-            .greeting_fn = wasm_extern_as_func(externs[greeting_fn_idx]).?,
         };
     }
 

@@ -90,22 +90,6 @@ pub fn main() anyerror!void {
 
     std.debug.warn("Loading plugin \"{}\" version {}\n", .{ plugin.name, plugin.version });
 
-    const name = "geemili";
-    const name_wasm = try plugin.wasm_alloc(name.len);
-    std.mem.copy(u8, name_wasm.span(), name);
-
-    const greeting_params = [_]wasm_val_t{
-        .{ .kind = WASM_I32, .of = .{ .i32 = @bitCast(u32, name_wasm.ptr) } },
-        .{ .kind = WASM_I32, .of = .{ .i32 = @bitCast(u32, name_wasm.len) } },
-    };
-    if (wasmtime_func_call(plugin.greeting_fn, &greeting_params, greeting_params.len, null, 0, &trap)) |err| {
-        var message: wasm_name_t = undefined;
-        wasmtime_error_message(err, &message);
-        const message_slice = message.data[0..message.size];
-        std.debug.warn("Wasm error: {}\n", .{message_slice});
-        return error.WasmCallGreeting;
-    }
-
     // Initialize enet library
     if (enet_initialize() != 0) {
         return error.ENetInitialize;
