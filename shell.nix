@@ -14,5 +14,6 @@ pkgs.mkShell {
     wasmtime_c
     pkgs.gdb
     pkgs.wabt
+    pkgs.llvmPackages_10.bintools
   ];
 }

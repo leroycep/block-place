@@ -21,12 +21,15 @@ pub fn build(b: *Builder) void {
         .path = "api/api.zig",
     };
 
-    const default_plugin = b.addStaticLibrary("default-plugin", "default-plugin/plugin.zig");
-    default_plugin.addPackage(plugin_api_pkg);
-    default_plugin.setBuildMode(b.standardReleaseOptions());
-    default_plugin.setTarget(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
-    default_plugin.setOutputDir(pluginOutDir);
-    default_plugin.install();
+    const default_plugin_obj = std.build.LibExeObjStep.createObject(b, "default-plugin", std.build.FileSource{ .path = "default-plugin/plugin.zig" });
+    default_plugin_obj.addPackage(plugin_api_pkg);
+    default_plugin_obj.setBuildMode(b.standardReleaseOptions());
+    default_plugin_obj.setTarget(.{ .cpu_arch = .wasm32, .os_tag = .freestanding, .cpu_features_add = std.Target.wasm.featureSet(&[_]std.Target.wasm.Feature{ .multivalue, .bulk_memory }) });
+
+    const defaultPluginOut = b.fmt("{}" ++ sep_str ++ "default-plugin.wasm", .{pluginOutDir});
+    const default_plugin = b.addSystemCommand(&[_][]const u8{ "zig", "clang", "-target", "wasm32-freestanding", "-Wl,--allow-undefined", "-Wl,--export-all", "-Wl,--export-table", "-Wl,--no-entry", "-nostdlib", "-o", defaultPluginOut });
+    default_plugin.addArtifactArg(default_plugin_obj);
+    b.getInstallStep().dependOn(&default_plugin.step);
 
     const exe = b.addExecutable("block-place", "client/main.zig");
     exe.linkLibC();

@@ -3,10 +3,40 @@ usingnamespace @import("./c.zig");
 
 const MAX_WASM_SIZE = 10 * 1024 * 1024;
 
+const Listener = struct {
+    plugin: *Plugin,
+    function: u32,
+};
+
+const Server = struct {
+    allocator: *std.mem.Allocator,
+    host: *ENetHost,
+    next_client_id: u32,
+    plugins: std.AutoHashMap(u32, *Plugin),
+    player_join_listeners: std.ArrayList(Listener),
+
+    pub fn init(allocator: *std.mem.Allocator) @This() {
+        return @This(){
+            .allocator = allocator,
+            .host = undefined,
+            .next_client_id = 1,
+            .plugins = std.AutoHashMap(u32, *Plugin).init(allocator),
+            .player_join_listeners = std.ArrayList(Listener).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: @This()) void {
+        self.player_join_listeners.deinit();
+    }
+};
+
 pub fn main() anyerror!void {
     const allocator = std.heap.c_allocator;
 
-    const engine = wasm_engine_new() orelse return error.WasmEngine;
+    const engine_config = wasm_config_new();
+    wasmtime_config_wasm_bulk_memory_set(engine_config, true);
+
+    const engine = wasm_engine_new_with_config(engine_config) orelse return error.WasmEngine;
     defer wasm_engine_delete(engine);
 
     const store = wasm_store_new(engine) orelse return error.WasmStore;
@@ -23,14 +53,23 @@ pub fn main() anyerror!void {
 
     var module_opt: ?*wasm_module_t = null;
     if (wasmtime_module_new(store, &wasm_bytes, &module_opt)) |err| {
+        var message: wasm_name_t = undefined;
+        wasmtime_error_message(err, &message);
+        const message_slice = message.data[0..message.size];
+        std.debug.warn("Wasm error: {}\n", .{message_slice});
         return error.WasmCompile;
     }
     defer wasm_module_delete(module_opt);
     const module = module_opt.?;
 
+    var server = Server.init(allocator);
+
     // define env::warn
-    const warn_func = try create_wasm_func(store, &[_]ValKind{ .i32, .i32 }, &[_]ValKind{}, warn_callback);
+    const warn_func = try create_wasm_func_with_caller(store, &[_]ValKind{ .i32, .i32 }, &[_]ValKind{}, warn_callback);
     try linker_define(linker, "env", "warn", warn_func);
+
+    const register_player_join_listener_func = try create_wasm_func_with_env(store, &[_]ValKind{ .i32, .i32 }, &[_]ValKind{}, register_player_join_listener_callback, &server);
+    try linker_define(linker, "env", "register_player_join_listener", register_player_join_listener_func);
 
     var trap: ?*wasm_trap_t = null;
     var instance_opt: ?*wasm_instance_t = null;
@@ -43,20 +82,10 @@ pub fn main() anyerror!void {
     }
     const instance = instance_opt.?;
 
-    const plugin = try get_plugin(allocator, module, instance);
+    var plugin = try get_plugin(allocator, module, instance);
     defer plugin.deinit(allocator);
 
     std.debug.warn("Loading plugin \"{}\" version {}\n", .{ plugin.name, plugin.version });
-
-    std.debug.warn("Calling wasm function `add_one`\n", .{});
-
-    const add_one_params = [_]wasm_val_t{.{ .kind = WASM_I32, .of = .{ .i32 = 24 } }};
-    var add_one_results = [_]wasm_val_t{std.mem.zeroes(wasm_val_t)};
-    if (wasmtime_func_call(plugin.add_one_fn, &add_one_params, add_one_params.len, &add_one_results, add_one_results.len, &trap)) |err| {
-        return error.WasmCallAddOne;
-    }
-
-    std.debug.warn("add_one({}) = {}\n", .{ add_one_params[0].of.i32, add_one_results[0].of.i32 });
 
     const name = "geemili";
     const name_wasm = try plugin.wasm_alloc(name.len);
@@ -85,16 +114,26 @@ pub fn main() anyerror!void {
     address.host = ENET_HOST_ANY;
     address.port = 41800;
 
-    var server = enet_host_create(&address, 32, 2, 0, 0) orelse return error.ENetCreateHost;
-    defer enet_host_destroy(server);
+    server.host = enet_host_create(&address, 32, 2, 0, 0) orelse return error.ENetCreateHost;
+    defer enet_host_destroy(server.host);
 
     std.debug.warn(" == Server started at {}:{} == \n", .{ address.host, address.port });
 
     var next_client_id: usize = 0;
 
+    const plugin_id = 1234;
+    plugin.id = plugin_id;
+    _ = try server.plugins.put(plugin_id, &plugin);
+
+    std.debug.warn("Enabling \"{}\"\n", .{plugin.name});
+    const on_enable_params = [_]wasm_val_t{.{ .kind = WASM_I32, .of = .{ .i32 = plugin_id } }};
+    if (wasmtime_func_call(plugin.on_enable_fn, &on_enable_params, on_enable_params.len, null, 0, &trap)) |err| {
+        return error.PluginEnable;
+    }
+
     var event: ENetEvent = undefined;
     while (true) {
-        _ = enet_host_service(server, &event, 5000);
+        _ = enet_host_service(server.host, &event, 5000);
         switch (event.type) {
             .ENET_EVENT_TYPE_CONNECT => {
                 std.debug.warn("A new client (id={}) connected from {}:{}.\n", .{ next_client_id, event.peer.*.address.host, event.peer.*.address.port });
@@ -102,9 +141,27 @@ pub fn main() anyerror!void {
                 event.peer.*.data = @intToPtr(?*c_void, next_client_id);
                 defer next_client_id += 1;
 
+                for (server.player_join_listeners.items) |listener| {
+                    const func = listener.plugin.get_callback(listener.function);
+
+                    const callback_params = [_]wasm_val_t{
+                        .{ .kind = WASM_I32, .of = .{ .i32 = @bitCast(u32, listener.plugin.id) } },
+                        .{ .kind = WASM_I32, .of = .{ .i32 = 0 } },
+                        .{ .kind = WASM_I32, .of = .{ .i32 = 0 } },
+                        .{ .kind = WASM_I32, .of = .{ .i32 = 0 } },
+                    };
+                    if (wasmtime_func_call(func, &callback_params, callback_params.len, null, 0, &trap)) |err| {
+                        var message: wasm_name_t = undefined;
+                        wasmtime_error_message(err, &message);
+                        const message_slice = message.data[0..message.size];
+                        std.debug.warn("Wasm error: {}\n", .{message_slice});
+                        return error.WasmPlayerJoinCallback;
+                    }
+                }
+
                 const msg = try std.fmt.allocPrint(allocator, "{} has joined the server", .{next_client_id});
                 const packet = enet_packet_create(msg.ptr, msg.len, ENET_PACKET_FLAG_RELIABLE);
-                enet_host_broadcast(server, 0, packet);
+                enet_host_broadcast(server.host, 0, packet);
             },
             .ENET_EVENT_TYPE_RECEIVE => {
                 defer enet_packet_destroy(event.packet);
@@ -117,7 +174,7 @@ pub fn main() anyerror!void {
                 if (event.channelID == 0) {
                     const msg = try std.fmt.allocPrint(allocator, "<{}> {}", .{ id, data });
                     const packet = enet_packet_create(msg.ptr, msg.len, ENET_PACKET_FLAG_RELIABLE);
-                    enet_host_broadcast(server, 0, packet);
+                    enet_host_broadcast(server.host, 0, packet);
                 }
             },
             .ENET_EVENT_TYPE_DISCONNECT => {
@@ -141,6 +198,7 @@ fn print_wasmer_error(allocator: *std.mem.Allocator) !void {
 }
 
 const Plugin = struct {
+    id: u32,
     name: []const u8,
     version: struct {
         major: u32,
@@ -152,7 +210,8 @@ const Plugin = struct {
         }
     },
     memory: *wasm_memory_t,
-    add_one_fn: *wasm_func_t,
+    callback_table: *wasm_table_t,
+    on_enable_fn: *wasm_func_t,
     realloc_fn: *wasm_func_t,
     greeting_fn: *wasm_func_t,
 
@@ -184,6 +243,14 @@ const Plugin = struct {
         }
         return MemoryView{ .memory = self.memory, .ptr = result, .len = n_bytes };
     }
+
+    fn get_callback(self: @This(), func_idx: u32) ?*wasm_func_t {
+        var func_ref: ?*wasm_func_t = undefined;
+        if (wasmtime_funcref_table_get(self.callback_table, func_idx, &func_ref))
+            return func_ref
+        else
+            return null;
+    }
 };
 
 const MemoryView = struct {
@@ -194,17 +261,18 @@ const MemoryView = struct {
     pub fn span(self: @This()) []u8 {
         const data_ptr = wasm_memory_data(self.memory);
         const data_len = wasm_memory_data_size(self.memory);
-        return data_ptr[self.ptr..self.ptr + self.len];
+        return data_ptr[self.ptr .. self.ptr + self.len];
     }
 };
 
 fn get_plugin(allocator: *std.mem.Allocator, module: *wasm_module_t, instance: *wasm_instance_t) !Plugin {
     var memory_idx_opt: ?usize = null;
+    var table_idx_opt: ?usize = null;
     var plugin_info_name_idx_opt: ?usize = null;
     var plugin_info_version_major_idx_opt: ?usize = null;
     var plugin_info_version_minor_idx_opt: ?usize = null;
     var plugin_info_version_patch_idx_opt: ?usize = null;
-    var add_one_func_idx_opt: ?usize = null;
+    var on_enable_func_idx_opt: ?usize = null;
     var realloc_fn_idx_opt: ?usize = null;
     var greeting_fn_idx_opt: ?usize = null;
 
@@ -220,16 +288,21 @@ fn get_plugin(allocator: *std.mem.Allocator, module: *wasm_module_t, instance: *
             const export_externtype_kind = wasm_externtype_kind(export_externtype);
             const kind = @intToEnum(wasm_externkind_enum, export_externtype_kind);
 
-            if (std.mem.eql(u8, export_name, "add_one")) {
+            if (std.mem.eql(u8, export_name, "on_enable")) {
                 if (kind != .WASM_EXTERN_FUNC) {
-                    return error.InvalidFormat; // add_one must be a function
+                    return error.InvalidFormat; // on_enable must be a function
                 }
-                add_one_func_idx_opt = idx;
+                on_enable_func_idx_opt = idx;
             } else if (std.mem.eql(u8, export_name, "memory")) {
                 if (kind != .WASM_EXTERN_MEMORY) {
                     return error.InvalidFormat; // "memory" must be memory
                 }
                 memory_idx_opt = idx;
+            } else if (std.mem.eql(u8, export_name, "__indirect_function_table")) {
+                if (kind != .WASM_EXTERN_TABLE) {
+                    return error.InvalidFormat; // "table" must be memory
+                }
+                table_idx_opt = idx;
             } else if (std.mem.eql(u8, export_name, "PLUGIN_INFO_NAME")) {
                 if (kind != .WASM_EXTERN_GLOBAL) {
                     return error.InvalidFormat; // plugin info name must be a global
@@ -260,16 +333,19 @@ fn get_plugin(allocator: *std.mem.Allocator, module: *wasm_module_t, instance: *
                     return error.InvalidFormat; // realloc must be a function
                 }
                 greeting_fn_idx_opt = idx;
+            } else {
+                std.debug.warn("Unknown export: {}\n", .{export_name});
             }
         }
     }
 
     const memory_idx = memory_idx_opt orelse return error.InvalidFormat;
+    const table_idx = table_idx_opt orelse return error.InvalidFormat;
     const plugin_info_name_idx = plugin_info_name_idx_opt orelse return error.InvalidFormat;
     const plugin_info_version_major_idx = plugin_info_version_major_idx_opt orelse return error.InvalidFormat;
     const plugin_info_version_minor_idx = plugin_info_version_minor_idx_opt orelse return error.InvalidFormat;
     const plugin_info_version_patch_idx = plugin_info_version_patch_idx_opt orelse return error.InvalidFormat;
-    const add_one_func_idx = add_one_func_idx_opt orelse return error.InvalidFormat;
+    const on_enable_func_idx = on_enable_func_idx_opt orelse return error.InvalidFormat;
     const realloc_fn_idx = realloc_fn_idx_opt orelse return error.InvalidFormat;
     const greeting_fn_idx = greeting_fn_idx_opt orelse return error.InvalidFormat;
 
@@ -279,12 +355,13 @@ fn get_plugin(allocator: *std.mem.Allocator, module: *wasm_module_t, instance: *
 
     const externs = externs_vec.data[0..externs_vec.size];
 
-    const memory_struct = wasm_extern_as_memory(externs[memory_idx]) orelse return error.WasmMemoryNotFirstExport;
+    const memory_struct = wasm_extern_as_memory(externs[memory_idx]) orelse return error.WasmMemoryCastError;
     const memory_ptr = wasm_memory_data(memory_struct);
     const memory_len = wasm_memory_data_size(memory_struct);
     const memory = memory_ptr[0..memory_len];
 
     return Plugin{
+        .id = undefined,
         .name = try std.mem.dupe(allocator, u8, try read_global_cstr(memory, externs[plugin_info_name_idx].?)),
         .version = .{
             .major = try read_global_u32(memory, externs[plugin_info_version_major_idx].?),
@@ -292,7 +369,8 @@ fn get_plugin(allocator: *std.mem.Allocator, module: *wasm_module_t, instance: *
             .patch = try read_global_u32(memory, externs[plugin_info_version_patch_idx].?),
         },
         .memory = memory_struct,
-        .add_one_fn = wasm_extern_as_func(externs[add_one_func_idx]).?,
+        .callback_table = wasm_extern_as_table(externs[table_idx]) orelse return error.CallbackTableCastError,
+        .on_enable_fn = wasm_extern_as_func(externs[on_enable_func_idx]).?,
         .realloc_fn = wasm_extern_as_func(externs[realloc_fn_idx]).?,
         .greeting_fn = wasm_extern_as_func(externs[greeting_fn_idx]).?,
     };
@@ -321,8 +399,6 @@ fn read_global_u32(memory: []const u8, ext: *wasm_extern_t) !u32 {
     return std.mem.readIntNative(u32, memory[ptr..][0..4]);
 }
 
-const WasmCallback = fn (caller: ?*const wasmtime_caller_t, args: ?[*]const wasm_val_t, results: ?[*]wasm_val_t) callconv(.C) ?*wasm_trap_t;
-
 fn warn_callback(caller: ?*const wasmtime_caller_t, args: ?[*]const wasm_val_t, results: ?[*]wasm_val_t) callconv(.C) ?*wasm_trap_t {
     const mem_extern = wasmtime_caller_export_get(caller, &to_byte_vec("memory"));
     const memory = wasm_extern_as_memory(mem_extern);
@@ -336,6 +412,24 @@ fn warn_callback(caller: ?*const wasmtime_caller_t, args: ?[*]const wasm_val_t, 
     const str = data[str_ptr .. str_ptr + str_len];
 
     std.debug.warn("{}", .{str});
+
+    return null;
+}
+
+fn register_player_join_listener_callback(env: ?*c_void, args: ?[*]const wasm_val_t, results: ?[*]wasm_val_t) callconv(.C) ?*wasm_trap_t {
+    const server = @ptrCast(*Server, @alignCast(@alignOf(*Server), env));
+
+    const plugin_id = @bitCast(u32, args.?[0].of.i32);
+    const plugin = server.plugins.getValue(plugin_id) orelse {
+        std.debug.warn("`register_player_join_listener` called with invalid plugin id\n", .{});
+        return null;
+    };
+    const function = @bitCast(u32, args.?[1].of.i32);
+
+    server.player_join_listeners.append(.{ .plugin = plugin, .function = function }) catch |err| {
+        std.debug.warn("`register_player_join_listener` failed to add listener: {}\n", .{err});
+        return null;
+    };
 
     return null;
 }
@@ -375,7 +469,9 @@ const ValKind = enum(u8) {
     _,
 };
 
-fn create_wasm_func(store: *wasm_store_t, params: []const ValKind, results: []const ValKind, callback: WasmCallback) !*wasm_extern_t {
+const WasmCallbackWithCaller = fn (caller: ?*const wasmtime_caller_t, args: ?[*]const wasm_val_t, results: ?[*]wasm_val_t) callconv(.C) ?*wasm_trap_t;
+
+fn create_wasm_func_with_caller(store: *wasm_store_t, params: []const ValKind, results: []const ValKind, callback: WasmCallbackWithCaller) !*wasm_extern_t {
     var params_vec: wasm_valtype_vec_t = undefined;
     wasm_valtype_vec_new_uninitialized(&params_vec, params.len);
     defer wasm_valtype_vec_delete(&params_vec);
@@ -392,6 +488,28 @@ fn create_wasm_func(store: *wasm_store_t, params: []const ValKind, results: []co
 
     const func_type = wasm_functype_new(&params_vec, &results_vec);
     const func = wasmtime_func_new(store, func_type, callback);
+    return wasm_func_as_extern(func) orelse {
+        return error.FuncAsExtern;
+    };
+}
+
+fn create_wasm_func_with_env(store: *wasm_store_t, params: []const ValKind, results: []const ValKind, callback: wasm_func_callback_with_env_t, env: ?*c_void) !*wasm_extern_t {
+    var params_vec: wasm_valtype_vec_t = undefined;
+    wasm_valtype_vec_new_uninitialized(&params_vec, params.len);
+    defer wasm_valtype_vec_delete(&params_vec);
+    for (params) |param_kind, idx| {
+        params_vec.data[idx] = wasm_valtype_new(@enumToInt(param_kind));
+    }
+
+    var results_vec: wasm_valtype_vec_t = undefined;
+    wasm_valtype_vec_new_uninitialized(&results_vec, results.len);
+    defer wasm_valtype_vec_delete(&results_vec);
+    for (results) |result_kind, idx| {
+        results_vec.data[idx] = wasm_valtype_new(@enumToInt(result_kind));
+    }
+
+    const func_type = wasm_functype_new(&params_vec, &results_vec);
+    const func = wasm_func_new_with_env(store, func_type, callback, env, null);
     return wasm_func_as_extern(func) orelse {
         return error.FuncAsExtern;
     };
