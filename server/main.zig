@@ -58,6 +58,22 @@ pub fn main() anyerror!void {
 
     std.debug.warn("add_one({}) = {}\n", .{ add_one_params[0].of.i32, add_one_results[0].of.i32 });
 
+    const name = "geemili";
+    const name_wasm = try plugin.wasm_alloc(name.len);
+    std.mem.copy(u8, name_wasm.span(), name);
+
+    const greeting_params = [_]wasm_val_t{
+        .{ .kind = WASM_I32, .of = .{ .i32 = @bitCast(u32, name_wasm.ptr) } },
+        .{ .kind = WASM_I32, .of = .{ .i32 = @bitCast(u32, name_wasm.len) } },
+    };
+    if (wasmtime_func_call(plugin.greeting_fn, &greeting_params, greeting_params.len, null, 0, &trap)) |err| {
+        var message: wasm_name_t = undefined;
+        wasmtime_error_message(err, &message);
+        const message_slice = message.data[0..message.size];
+        std.debug.warn("Wasm error: {}\n", .{message_slice});
+        return error.WasmCallGreeting;
+    }
+
     // Initialize enet library
     if (enet_initialize() != 0) {
         return error.ENetInitialize;
@@ -135,10 +151,50 @@ const Plugin = struct {
             return std.fmt.format(writer, "{}.{}.{}", .{ self.major, self.minor, self.patch });
         }
     },
+    memory: *wasm_memory_t,
     add_one_fn: *wasm_func_t,
+    realloc_fn: *wasm_func_t,
+    greeting_fn: *wasm_func_t,
 
     fn deinit(self: @This(), allocator: *std.mem.Allocator) void {
         allocator.free(self.name);
+    }
+
+    fn wasm_alloc(self: @This(), n_bytes: u32) !MemoryView {
+        const realloc_params = [_]wasm_val_t{
+            .{ .kind = WASM_I32, .of = .{ .i32 = 0 } },
+            .{ .kind = WASM_I32, .of = .{ .i32 = 0 } },
+            .{ .kind = WASM_I32, .of = .{ .i32 = @intCast(i32, n_bytes) } },
+        };
+        var realloc_results = [_]wasm_val_t{
+            std.mem.zeroes(wasm_val_t),
+        };
+        var trap: ?*wasm_trap_t = undefined;
+        if (wasmtime_func_call(self.realloc_fn, &realloc_params, realloc_params.len, &realloc_results, realloc_results.len, &trap)) |err| {
+            var message: wasm_name_t = undefined;
+            wasmtime_error_message(err, &message);
+            const message_slice = message.data[0..message.size];
+            std.debug.warn("Wasm error: {}\n", .{message_slice});
+            return error.WasmCall;
+        }
+        std.debug.assert(realloc_results[0].kind == WASM_I32);
+        const result = @bitCast(u32, realloc_results[0].of.i32);
+        if (result == 0) {
+            return error.OutOfMemory;
+        }
+        return MemoryView{ .memory = self.memory, .ptr = result, .len = n_bytes };
+    }
+};
+
+const MemoryView = struct {
+    memory: *wasm_memory_t,
+    ptr: u32,
+    len: u32,
+
+    pub fn span(self: @This()) []u8 {
+        const data_ptr = wasm_memory_data(self.memory);
+        const data_len = wasm_memory_data_size(self.memory);
+        return data_ptr[self.ptr..self.ptr + self.len];
     }
 };
 
@@ -149,6 +205,8 @@ fn get_plugin(allocator: *std.mem.Allocator, module: *wasm_module_t, instance: *
     var plugin_info_version_minor_idx_opt: ?usize = null;
     var plugin_info_version_patch_idx_opt: ?usize = null;
     var add_one_func_idx_opt: ?usize = null;
+    var realloc_fn_idx_opt: ?usize = null;
+    var greeting_fn_idx_opt: ?usize = null;
 
     {
         var exports: wasm_exporttype_vec_t = undefined;
@@ -192,6 +250,16 @@ fn get_plugin(allocator: *std.mem.Allocator, module: *wasm_module_t, instance: *
                     return error.InvalidFormat; // plugin info version patch must be a global
                 }
                 plugin_info_version_patch_idx_opt = idx;
+            } else if (std.mem.eql(u8, export_name, "realloc")) {
+                if (kind != .WASM_EXTERN_FUNC) {
+                    return error.InvalidFormat; // realloc must be a function
+                }
+                realloc_fn_idx_opt = idx;
+            } else if (std.mem.eql(u8, export_name, "greeting")) {
+                if (kind != .WASM_EXTERN_FUNC) {
+                    return error.InvalidFormat; // realloc must be a function
+                }
+                greeting_fn_idx_opt = idx;
             }
         }
     }
@@ -202,6 +270,8 @@ fn get_plugin(allocator: *std.mem.Allocator, module: *wasm_module_t, instance: *
     const plugin_info_version_minor_idx = plugin_info_version_minor_idx_opt orelse return error.InvalidFormat;
     const plugin_info_version_patch_idx = plugin_info_version_patch_idx_opt orelse return error.InvalidFormat;
     const add_one_func_idx = add_one_func_idx_opt orelse return error.InvalidFormat;
+    const realloc_fn_idx = realloc_fn_idx_opt orelse return error.InvalidFormat;
+    const greeting_fn_idx = greeting_fn_idx_opt orelse return error.InvalidFormat;
 
     var externs_vec: wasm_extern_vec_t = undefined;
     wasm_instance_exports(instance, &externs_vec);
@@ -221,7 +291,10 @@ fn get_plugin(allocator: *std.mem.Allocator, module: *wasm_module_t, instance: *
             .minor = try read_global_u32(memory, externs[plugin_info_version_minor_idx].?),
             .patch = try read_global_u32(memory, externs[plugin_info_version_patch_idx].?),
         },
+        .memory = memory_struct,
         .add_one_fn = wasm_extern_as_func(externs[add_one_func_idx]).?,
+        .realloc_fn = wasm_extern_as_func(externs[realloc_fn_idx]).?,
+        .greeting_fn = wasm_extern_as_func(externs[greeting_fn_idx]).?,
     };
 }
 
