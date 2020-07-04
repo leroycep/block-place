@@ -1,6 +1,8 @@
 const std = @import("std");
 usingnamespace @import("./c.zig");
 const Plugin = @import("./plugin.zig").Plugin;
+const wasm = @import("./wasm.zig");
+const ValKind = wasm.ValKind;
 
 const MAX_WASM_SIZE = 10 * 1024 * 1024;
 
@@ -66,11 +68,11 @@ pub fn main() anyerror!void {
     var server = Server.init(allocator);
 
     // define env::warn
-    const warn_func = try create_wasm_func_with_caller(store, &[_]ValKind{ .i32, .i32 }, &[_]ValKind{}, warn_callback);
-    try linker_define(linker, "env", "warn", warn_func);
+    const warn_func = try wasm.create_func_with_caller(store, &[_]ValKind{ .i32, .i32 }, &[_]ValKind{}, warn_callback);
+    try wasm.linker_define(linker, "env", "warn", warn_func);
 
-    const register_player_join_listener_func = try create_wasm_func_with_env(store, &[_]ValKind{ .i32, .i32 }, &[_]ValKind{}, register_player_join_listener_callback, &server);
-    try linker_define(linker, "env", "register_player_join_listener", register_player_join_listener_func);
+    const register_player_join_listener_func = try wasm.create_func_with_env(store, &[_]ValKind{ .i32, .i32 }, &[_]ValKind{}, register_player_join_listener_callback, &server);
+    try wasm.linker_define(linker, "env", "register_player_join_listener", register_player_join_listener_func);
 
     var trap: ?*wasm_trap_t = null;
     var instance_opt: ?*wasm_instance_t = null;
@@ -199,7 +201,7 @@ fn print_wasmer_error(allocator: *std.mem.Allocator) !void {
 }
 
 fn warn_callback(caller: ?*const wasmtime_caller_t, args: ?[*]const wasm_val_t, results: ?[*]wasm_val_t) callconv(.C) ?*wasm_trap_t {
-    const mem_extern = wasmtime_caller_export_get(caller, &to_byte_vec("memory"));
+    const mem_extern = wasmtime_caller_export_get(caller, &wasm.to_byte_vec("memory"));
     const memory = wasm_extern_as_memory(mem_extern);
     const data_ptr = wasm_memory_data(memory);
     const data_len = wasm_memory_data_size(memory);
@@ -231,85 +233,4 @@ fn register_player_join_listener_callback(env: ?*c_void, args: ?[*]const wasm_va
     };
 
     return null;
-}
-
-fn to_byte_vec(slice: [:0]const u8) wasm_byte_vec_t {
-    var vec: wasm_byte_vec_t = undefined;
-    wasm_byte_vec_new(&vec, slice.len, slice.ptr);
-    return vec;
-}
-
-fn linker_define(linker: *wasmtime_linker_t, module: [:0]const u8, name: [:0]const u8, item: *const wasm_extern_t) !void {
-    var module_bytes = to_byte_vec(module);
-    defer wasm_byte_vec_delete(&module_bytes);
-
-    var name_bytes = to_byte_vec(name);
-    defer wasm_byte_vec_delete(&name_bytes);
-
-    if (wasmtime_linker_define(linker, &module_bytes, &name_bytes, item)) |err| {
-        var message: wasm_name_t = undefined;
-        wasmtime_error_message(err, &message);
-        defer wasm_byte_vec_delete(&message);
-
-        const message_slice = message.data[0..message.size];
-        std.debug.warn("Wasm error: {}\n", .{message_slice});
-
-        return error.WasmLinker;
-    }
-}
-
-const ValKind = enum(u8) {
-    i32 = WASM_I32,
-    i64 = WASM_I64,
-    f32 = WASM_F32,
-    f64 = WASM_F64,
-    AnyRef = WASM_ANYREF,
-    FuncRef = WASM_FUNCREF,
-    _,
-};
-
-const WasmCallbackWithCaller = fn (caller: ?*const wasmtime_caller_t, args: ?[*]const wasm_val_t, results: ?[*]wasm_val_t) callconv(.C) ?*wasm_trap_t;
-
-fn create_wasm_func_with_caller(store: *wasm_store_t, params: []const ValKind, results: []const ValKind, callback: WasmCallbackWithCaller) !*wasm_extern_t {
-    var params_vec: wasm_valtype_vec_t = undefined;
-    wasm_valtype_vec_new_uninitialized(&params_vec, params.len);
-    defer wasm_valtype_vec_delete(&params_vec);
-    for (params) |param_kind, idx| {
-        params_vec.data[idx] = wasm_valtype_new(@enumToInt(param_kind));
-    }
-
-    var results_vec: wasm_valtype_vec_t = undefined;
-    wasm_valtype_vec_new_uninitialized(&results_vec, results.len);
-    defer wasm_valtype_vec_delete(&results_vec);
-    for (results) |result_kind, idx| {
-        results_vec.data[idx] = wasm_valtype_new(@enumToInt(result_kind));
-    }
-
-    const func_type = wasm_functype_new(&params_vec, &results_vec);
-    const func = wasmtime_func_new(store, func_type, callback);
-    return wasm_func_as_extern(func) orelse {
-        return error.FuncAsExtern;
-    };
-}
-
-fn create_wasm_func_with_env(store: *wasm_store_t, params: []const ValKind, results: []const ValKind, callback: wasm_func_callback_with_env_t, env: ?*c_void) !*wasm_extern_t {
-    var params_vec: wasm_valtype_vec_t = undefined;
-    wasm_valtype_vec_new_uninitialized(&params_vec, params.len);
-    defer wasm_valtype_vec_delete(&params_vec);
-    for (params) |param_kind, idx| {
-        params_vec.data[idx] = wasm_valtype_new(@enumToInt(param_kind));
-    }
-
-    var results_vec: wasm_valtype_vec_t = undefined;
-    wasm_valtype_vec_new_uninitialized(&results_vec, results.len);
-    defer wasm_valtype_vec_delete(&results_vec);
-    for (results) |result_kind, idx| {
-        results_vec.data[idx] = wasm_valtype_new(@enumToInt(result_kind));
-    }
-
-    const func_type = wasm_functype_new(&params_vec, &results_vec);
-    const func = wasm_func_new_with_env(store, func_type, callback, env, null);
-    return wasm_func_as_extern(func) orelse {
-        return error.FuncAsExtern;
-    };
 }
