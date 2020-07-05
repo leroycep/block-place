@@ -124,3 +124,83 @@ pub fn create_func_with_env(store: *wasm_store_t, params: []const ValKind, resul
         return error.FuncAsExtern;
     };
 }
+
+pub fn extract_exports(comptime expected: type, module: *wasm_module_t, instance: *wasm_instance_t) !expected {
+    const expected_info = @typeInfo(expected);
+    if (expected_info != .Struct) {
+        @compileError("Expected must be a struct");
+    }
+    const expected_struct = expected_info.Struct;
+    // Result variables
+    var found_fields = [_]bool{false} ** expected_struct.fields.len;
+    var result: expected = undefined;
+
+    // Variables for looking into wasm module/instance
+    var exports: wasm_exporttype_vec_t = undefined;
+    defer wasm_exporttype_vec_delete(&exports);
+    wasm_module_exports(module, &exports);
+    const exports_slice = exports.data[0..exports.size];
+
+    var externs_vec: wasm_extern_vec_t = undefined;
+    wasm_instance_exports(instance, &externs_vec);
+    defer wasm_extern_vec_delete(&externs_vec);
+    const externs = externs_vec.data[0..externs_vec.size];
+
+    const memory_t = find_mem: {
+        for (exports_slice) |exp, idx| {
+            const export_name_bytes = wasm_exporttype_name(exp);
+            const export_name = export_name_bytes.*.data[0..export_name_bytes.*.size];
+            if (std.mem.eql(u8, export_name, "memory")) {
+                const export_externtype = wasm_exporttype_type(exp);
+                const export_externtype_kind = wasm_externtype_kind(export_externtype);
+                const kind = @intToEnum(wasm_externkind_enum, export_externtype_kind);
+                if (kind != .WASM_EXTERN_MEMORY) {
+                    return error.InvalidFormat;
+                }
+                break :find_mem wasm_extern_as_memory(externs[idx]);
+            }
+        }
+        return error.MemoryExportNotFound;
+    };
+    const memory = mem: {
+        const ptr = wasm_memory_data(memory_t);
+        const len = wasm_memory_data_size(memory_t);
+        break :mem ptr[0..len];
+    };
+
+    for (exports_slice) |exp, idx| {
+        const export_name_bytes = wasm_exporttype_name(exp);
+        const export_name = export_name_bytes.*.data[0..export_name_bytes.*.size];
+
+        comptime var field_idx = 0;
+        inline while (field_idx < expected_struct.fields.len) : (field_idx += 1) {
+            const field = expected_struct.fields[field_idx];
+            if (std.mem.eql(u8, export_name, field.name)) {
+                @field(result, field.name) = try extract_export_internal(field.field_type, exp.?, externs[idx].?, memory);
+                found_fields[field_idx] = true;
+            }
+        }
+    }
+
+    comptime var field_idx = 0;
+    inline while (field_idx < expected_struct.fields.len) : (field_idx += 1) {
+        if (!found_fields[field_idx]) {
+            return error.InvalidFormat;
+        }
+    }
+
+    return result;
+}
+
+fn extract_export_internal(comptime expected: type, exporttype: *wasm_exporttype_t, exportval: *wasm_extern_t, memory: []const u8) !expected {
+    const export_externtype = wasm_exporttype_type(exporttype);
+    const export_externtype_kind = wasm_externtype_kind(export_externtype);
+    const kind = @intToEnum(wasm_externkind_enum, export_externtype_kind);
+    return switch (expected) {
+        u32, []const u8 => if (kind == .WASM_EXTERN_GLOBAL) read_global(expected, memory, exportval) else return error.InvalidFormat,
+        *wasm_memory_t => if (kind == .WASM_EXTERN_MEMORY) wasm_extern_as_memory(exportval) orelse return error.InvalidFormat else return error.InvalidFormat,
+        *wasm_table_t => if (kind == .WASM_EXTERN_TABLE) wasm_extern_as_table(exportval) orelse return error.InvalidFormat else return error.InvalidFormat,
+        *wasm_func_t => if (kind == .WASM_EXTERN_FUNC) wasm_extern_as_func(exportval) orelse return error.InvalidFormat else return error.InvalidFormat,
+        else => @compileError("Type not supported"),
+    };
+}

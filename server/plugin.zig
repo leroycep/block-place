@@ -21,105 +21,29 @@ pub const Plugin = struct {
     realloc_fn: *wasm_func_t,
 
     pub fn from_module_and_instance(allocator: *std.mem.Allocator, module: *wasm_module_t, instance: *wasm_instance_t) !Plugin {
-        var memory_idx_opt: ?usize = null;
-        var table_idx_opt: ?usize = null;
-        var plugin_info_name_idx_opt: ?usize = null;
-        var plugin_info_version_major_idx_opt: ?usize = null;
-        var plugin_info_version_minor_idx_opt: ?usize = null;
-        var plugin_info_version_patch_idx_opt: ?usize = null;
-        var on_enable_func_idx_opt: ?usize = null;
-        var realloc_fn_idx_opt: ?usize = null;
-
-        {
-            var exports: wasm_exporttype_vec_t = undefined;
-            defer wasm_exporttype_vec_delete(&exports);
-            wasm_module_exports(module, &exports);
-            const exports_slice = exports.data[0..exports.size];
-            for (exports_slice) |exp, idx| {
-                const export_name_bytes = wasm_exporttype_name(exp);
-                const export_name = export_name_bytes.*.data[0..export_name_bytes.*.size];
-                const export_externtype = wasm_exporttype_type(exp);
-                const export_externtype_kind = wasm_externtype_kind(export_externtype);
-                const kind = @intToEnum(wasm_externkind_enum, export_externtype_kind);
-
-                if (std.mem.eql(u8, export_name, "on_enable")) {
-                    if (kind != .WASM_EXTERN_FUNC) {
-                        return error.InvalidFormat; // on_enable must be a function
-                    }
-                    on_enable_func_idx_opt = idx;
-                } else if (std.mem.eql(u8, export_name, "memory")) {
-                    if (kind != .WASM_EXTERN_MEMORY) {
-                        return error.InvalidFormat; // "memory" must be memory
-                    }
-                    memory_idx_opt = idx;
-                } else if (std.mem.eql(u8, export_name, "__indirect_function_table")) {
-                    if (kind != .WASM_EXTERN_TABLE) {
-                        return error.InvalidFormat; // "table" must be memory
-                    }
-                    table_idx_opt = idx;
-                } else if (std.mem.eql(u8, export_name, "PLUGIN_INFO_NAME")) {
-                    if (kind != .WASM_EXTERN_GLOBAL) {
-                        return error.InvalidFormat; // plugin info name must be a global
-                    }
-                    plugin_info_name_idx_opt = idx;
-                } else if (std.mem.eql(u8, export_name, "PLUGIN_INFO_VERSION_MAJOR")) {
-                    if (kind != .WASM_EXTERN_GLOBAL) {
-                        return error.InvalidFormat; // plugin info version major must be a global
-                    }
-                    plugin_info_version_major_idx_opt = idx;
-                } else if (std.mem.eql(u8, export_name, "PLUGIN_INFO_VERSION_MINOR")) {
-                    if (kind != .WASM_EXTERN_GLOBAL) {
-                        return error.InvalidFormat; // plugin info version minor must be a global
-                    }
-                    plugin_info_version_minor_idx_opt = idx;
-                } else if (std.mem.eql(u8, export_name, "PLUGIN_INFO_VERSION_PATCH")) {
-                    if (kind != .WASM_EXTERN_GLOBAL) {
-                        return error.InvalidFormat; // plugin info version patch must be a global
-                    }
-                    plugin_info_version_patch_idx_opt = idx;
-                } else if (std.mem.eql(u8, export_name, "realloc")) {
-                    if (kind != .WASM_EXTERN_FUNC) {
-                        return error.InvalidFormat; // realloc must be a function
-                    }
-                    realloc_fn_idx_opt = idx;
-                } else {
-                    std.debug.warn("Unknown export: {}\n", .{export_name});
-                }
-            }
-        }
-
-        const memory_idx = memory_idx_opt orelse return error.InvalidFormat;
-        const table_idx = table_idx_opt orelse return error.InvalidFormat;
-        const plugin_info_name_idx = plugin_info_name_idx_opt orelse return error.InvalidFormat;
-        const plugin_info_version_major_idx = plugin_info_version_major_idx_opt orelse return error.InvalidFormat;
-        const plugin_info_version_minor_idx = plugin_info_version_minor_idx_opt orelse return error.InvalidFormat;
-        const plugin_info_version_patch_idx = plugin_info_version_patch_idx_opt orelse return error.InvalidFormat;
-        const on_enable_func_idx = on_enable_func_idx_opt orelse return error.InvalidFormat;
-        const realloc_fn_idx = realloc_fn_idx_opt orelse return error.InvalidFormat;
-
-        var externs_vec: wasm_extern_vec_t = undefined;
-        wasm_instance_exports(instance, &externs_vec);
-        defer wasm_extern_vec_delete(&externs_vec);
-
-        const externs = externs_vec.data[0..externs_vec.size];
-
-        const memory_struct = wasm_extern_as_memory(externs[memory_idx]) orelse return error.WasmMemoryCastError;
-        const memory_ptr = wasm_memory_data(memory_struct);
-        const memory_len = wasm_memory_data_size(memory_struct);
-        const memory = memory_ptr[0..memory_len];
+        const exports = try wasm.extract_exports(struct {
+            memory: *wasm_memory_t,
+            __indirect_function_table: *wasm_table_t,
+            realloc: *wasm_func_t,
+            on_enable: *wasm_func_t,
+            PLUGIN_INFO_NAME: []const u8,
+            PLUGIN_INFO_VERSION_MAJOR: u32,
+            PLUGIN_INFO_VERSION_MINOR: u32,
+            PLUGIN_INFO_VERSION_PATCH: u32,
+        }, module, instance);
 
         return Plugin{
             .id = undefined,
-            .name = try std.mem.dupe(allocator, u8, try wasm.read_global([]const u8, memory, externs[plugin_info_name_idx].?)),
+            .name = try std.mem.dupe(allocator, u8, exports.PLUGIN_INFO_NAME),
             .version = .{
-                .major = try wasm.read_global(u32, memory, externs[plugin_info_version_major_idx].?),
-                .minor = try wasm.read_global(u32, memory, externs[plugin_info_version_minor_idx].?),
-                .patch = try wasm.read_global(u32, memory, externs[plugin_info_version_patch_idx].?),
+                .major = exports.PLUGIN_INFO_VERSION_MAJOR,
+                .minor = exports.PLUGIN_INFO_VERSION_MINOR,
+                .patch = exports.PLUGIN_INFO_VERSION_PATCH,
             },
-            .memory = memory_struct,
-            .callback_table = wasm_extern_as_table(externs[table_idx]) orelse return error.CallbackTableCastError,
-            .on_enable_fn = wasm_extern_as_func(externs[on_enable_func_idx]).?,
-            .realloc_fn = wasm_extern_as_func(externs[realloc_fn_idx]).?,
+            .memory = exports.memory,
+            .callback_table = exports.__indirect_function_table,
+            .on_enable_fn = exports.on_enable,
+            .realloc_fn = exports.realloc,
         };
     }
 
