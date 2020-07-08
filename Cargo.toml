@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "server",
+    "client",
+]
+
+[patch.crates-io]
+pathfinder_geometry = { git = "https://github.com/servo/pathfinder" }
+pathfinder_simd = { git = "https://github.com/servo/pathfinder" }

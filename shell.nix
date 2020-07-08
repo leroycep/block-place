@@ -15,5 +15,9 @@ pkgs.mkShell {
     pkgs.gdb
     pkgs.wabt
     pkgs.llvmPackages_10.bintools
+    pkgs.cargo
+
+    # pathfinder dependencies
+    pkgs.cmake pkgs.xorg.libX11 pkgs.freetype pkgs.gtk3
   ];
 }

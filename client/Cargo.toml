@@ -1,0 +1,29 @@
+[package]
+name = "block-place-client"
+version = "0.1.0"
+authors = ["LeRoyce Pearson <leroycepearson@geemili.xyz>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+wasmtime = "0.18"
+quinn = "0.6"
+
+font-kit = "0.6"
+gl = "0.14"
+sdl2 = "0.33"
+sdl2-sys = "0.33"
+
+pathfinder_color = { git = "https://github.com/servo/pathfinder" }
+pathfinder_content = { git = "https://github.com/servo/pathfinder" }
+pathfinder_geometry = { git = "https://github.com/servo/pathfinder" }
+pathfinder_gl = { git = "https://github.com/servo/pathfinder" }
+pathfinder_gpu = { git = "https://github.com/servo/pathfinder" }
+pathfinder_renderer = { git = "https://github.com/servo/pathfinder" }
+pathfinder_resources = { git = "https://github.com/servo/pathfinder" }
+
+[dependencies.pathfinder_canvas]
+features = ["pf-text"]
+git = "https://github.com/servo/pathfinder"
+
