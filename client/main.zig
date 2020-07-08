@@ -150,6 +150,7 @@ pub fn main() anyerror!void {
         if (renderText) {
             render(window, renderer, text_typed.span(), message_log);
         }
+        SDL_Delay(16);
     }
 
     enet_peer_disconnect(peer, 0);

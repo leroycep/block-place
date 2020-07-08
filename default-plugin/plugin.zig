@@ -11,6 +11,8 @@ pub const allocator = std.heap.page_allocator;
 export fn realloc(old_ptr: [*]u8, old_len: usize, new_byte_count: usize) ?[*]u8 {
     const old_mem = old_ptr[0..old_len];
     const new_mem = allocator.realloc(old_mem, new_byte_count) catch {
+        const msg = "OutOfMemory error!";
+        api.warn(msg, msg.len);
         return null;
     };
     return new_mem.ptr;
@@ -21,6 +23,14 @@ export fn on_enable(plugin: *api.Plugin) void {
 }
 
 fn on_player_join(plugin: *api.Plugin, server: *api.Server, event: *api.Event, player: *api.Player) callconv(.C) void {
-    const msg = "A player has joined the server!\n";
-    api.warn(msg, msg.len);
+    var player_name_ptr: [*]u8 = undefined;
+    var player_name_len: usize = undefined;
+    api.player_name(player, plugin, &player_name_ptr, &player_name_len);
+    const player_name = player_name_ptr[0..player_name_len];
+    defer allocator.free(player_name);
+
+    const msg = std.fmt.allocPrint(allocator, "{} has joined the server!\n", .{player_name}) catch return;
+    defer allocator.free(msg);
+
+    api.warn(msg.ptr, msg.len);
 }

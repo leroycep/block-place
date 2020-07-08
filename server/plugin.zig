@@ -52,6 +52,8 @@ pub const Plugin = struct {
     }
 
     pub fn wasm_alloc(self: @This(), n_bytes: u32) !MemoryView {
+        std.debug.warn("wasm_alloc (realloc {})\n", .{self.realloc_fn});
+        defer std.debug.warn("end wasm_alloc\n", .{});
         const realloc_params = [_]wasm_val_t{
             .{ .kind = WASM_I32, .of = .{ .i32 = 0 } },
             .{ .kind = WASM_I32, .of = .{ .i32 = 0 } },
@@ -60,13 +62,27 @@ pub const Plugin = struct {
         var realloc_results = [_]wasm_val_t{
             std.mem.zeroes(wasm_val_t),
         };
-        var trap: ?*wasm_trap_t = undefined;
+        var trap: ?*wasm_trap_t = null;
         if (wasmtime_func_call(self.realloc_fn, &realloc_params, realloc_params.len, &realloc_results, realloc_results.len, &trap)) |err| {
             var message: wasm_name_t = undefined;
             wasmtime_error_message(err, &message);
+            defer wasm_byte_vec_delete(&message);
+            wasmtime_error_delete(err);
+
             const message_slice = message.data[0..message.size];
             std.debug.warn("Wasm error: {}\n", .{message_slice});
             return error.WasmCall;
+        }
+        if (trap != null) {
+            std.debug.warn("Trap!\n", .{});
+            var message: wasm_name_t = undefined;
+            wasm_trap_message(trap, &message);
+            defer wasm_byte_vec_delete(&message);
+            wasm_trap_delete(trap);
+
+            const message_slice = message.data[0..message.size];
+            std.debug.warn("Wasm trap: {}\n", .{message_slice});
+            return error.TrapNotNull;
         }
         std.debug.assert(realloc_results[0].kind == WASM_I32);
         const result = @bitCast(u32, realloc_results[0].of.i32);
@@ -74,6 +90,15 @@ pub const Plugin = struct {
             return error.OutOfMemory;
         }
         return MemoryView{ .memory = self.memory, .ptr = result, .len = n_bytes };
+    }
+
+    pub fn wasm_ptr(self: @This(), comptime T: type, ptr: u32) *T {
+        const data_ptr = wasm_memory_data(self.memory);
+        const data_len = wasm_memory_data_size(self.memory);
+        if (ptr + @sizeOf(T) >= data_len) {
+            unreachable; // Type goes out of bounds
+        }
+        return @ptrCast(*T, @alignCast(4, &data_ptr[ptr]));
     }
 
     pub fn get_callback(self: @This(), func_idx: u32) ?*wasm_func_t {

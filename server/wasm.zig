@@ -204,3 +204,18 @@ fn extract_export_internal(comptime expected: type, exporttype: *wasm_exporttype
         else => @compileError("Type not supported"),
     };
 }
+
+pub const Val = union(enum) {};
+
+fn call_func(exporttype: *wasm_exporttype_t, exportval: *wasm_extern_t, memory: []const u8) !expected {
+    const export_externtype = wasm_exporttype_type(exporttype);
+    const export_externtype_kind = wasm_externtype_kind(export_externtype);
+    const kind = @intToEnum(wasm_externkind_enum, export_externtype_kind);
+    return switch (expected) {
+        u32, []const u8 => if (kind == .WASM_EXTERN_GLOBAL) read_global(expected, memory, exportval) else return error.InvalidFormat,
+        *wasm_memory_t => if (kind == .WASM_EXTERN_MEMORY) wasm_extern_as_memory(exportval) orelse return error.InvalidFormat else return error.InvalidFormat,
+        *wasm_table_t => if (kind == .WASM_EXTERN_TABLE) wasm_extern_as_table(exportval) orelse return error.InvalidFormat else return error.InvalidFormat,
+        *wasm_func_t => if (kind == .WASM_EXTERN_FUNC) wasm_extern_as_func(exportval) orelse return error.InvalidFormat else return error.InvalidFormat,
+        else => @compileError("Type not supported"),
+    };
+}

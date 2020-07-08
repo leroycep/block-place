@@ -9,4 +9,4 @@ pub extern fn server_broadcast_message(server: *Server, message_ptr: [*]u8, mess
 pub const Event = @Type(.Opaque);
 
 pub const Player = @Type(.Opaque);
-pub extern fn player_name(player: *Player) callconv(.C) Bytes;
+pub extern fn player_name(player: *Player, plugin: *Plugin, ptr_out: *[*]u8, len_out: *usize) callconv(.C) void;
