@@ -63,6 +63,8 @@ fn main() {
 
     let mut server_peer_id = None;
 
+    let mut next_hearbeat = std::time::Instant::now() + std::time::Duration::from_millis(200);
+
     // Wait for a keypress.
     let mut hq_events = Vec::new();
     let mut event_pump = sdl_context.event_pump().unwrap();
@@ -95,6 +97,13 @@ fn main() {
                     println!("Server disconnected: {}", reason.as_ref().map(|x| x.as_str()).unwrap_or("Reason unknown"));
                 }
                 _ => { }
+            }
+        }
+
+        if let Some(peer_id) = server_peer_id {
+            if std::time::Instant::now() >= next_hearbeat {
+                endpoint.send_datagram(peer_id, Bytes::new());
+                next_hearbeat = std::time::Instant::now() + std::time::Duration::from_millis(200);
             }
         }
 
