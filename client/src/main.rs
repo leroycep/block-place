@@ -61,6 +61,8 @@ fn main() {
     let mut text_log: VecDeque<String> = VecDeque::new();
     let mut text_typed = String::new();
 
+    let mut server_peer_id = None;
+
     // Wait for a keypress.
     let mut hq_events = Vec::new();
     let mut event_pump = sdl_context.event_pump().unwrap();
@@ -75,16 +77,19 @@ fn main() {
                     ..
                 } => {
                     endpoint.accept(peer_id);
+                    server_peer_id = Some(peer_id);
                     println!("Server connected: {}", socket_addr);
 
-                    endpoint.send_message(
-                        peer_id,
-                        Bytes::from(&[1,2,3,4][..]),
-                        MessageOrder::Unordered,
-                    );
                 }
-                EndpointEvent::ReceivedMessage { ..} => {
+                EndpointEvent::ReceivedMessage { bytes, .. } => {
                     println!("Received message");
+                    match std::str::from_utf8(&*bytes) {
+                        Ok(s) => {
+                            text_log.push_back(s.into());
+                            should_render = true;
+                        },
+                        _ => println!("invalid utf-8"),
+                    };
                 }
                 EndpointEvent::Disconnected {reason, ..} => {
                     println!("Server disconnected: {}", reason.as_ref().map(|x| x.as_str()).unwrap_or("Reason unknown"));
@@ -101,7 +106,14 @@ fn main() {
                     should_render = true;
                 },
                 Event::KeyDown { keycode: Some(Keycode::Return), .. } => {
-                    text_log.push_back(text_typed.clone());
+                    if server_peer_id.is_none() {
+                        continue;
+                    }
+                    endpoint.send_message(
+                        server_peer_id.unwrap(),
+                        Bytes::from(text_typed.clone()),
+                        MessageOrder::Ordered,
+                    );
                     text_typed.clear();
                     should_render = true;
                 },

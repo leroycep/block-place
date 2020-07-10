@@ -4,11 +4,16 @@ use wasmtime::{Store, Module, Extern, Trap, Caller, Linker, Engine, Config, Val}
 
 use dashmap::DashMap;
 
-use harlequinn::{Certificate, EndpointEvent, HqEndpoint, PrivateKey};
+use harlequinn::{Certificate, EndpointEvent, HqEndpoint, PrivateKey, PeerId, MessageOrder};
 
 mod plugin;
 
 use plugin::Plugin;
+
+struct Player {
+    name: String,
+    peer_id: PeerId,
+}
 
 fn main() {
     // Initialize WASM runtime
@@ -41,7 +46,7 @@ fn main() {
 
     let player_join_listener: std::rc::Rc<std::cell::RefCell<Option<u32>>> = std::rc::Rc::new(std::cell::RefCell::new(None));
     let plugins_rc: std::rc::Rc<DashMap<u32, Plugin>> = std::rc::Rc::new(DashMap::new());
-    let players_rc: std::rc::Rc<DashMap<u32, String>> = std::rc::Rc::new(DashMap::new());
+    let players_rc: std::rc::Rc<DashMap<u32, Player>> = std::rc::Rc::new(DashMap::new());
 
     let player_join_listener_clone = std::rc::Rc::clone(&player_join_listener);
     linker.func("env", "register_player_join_listener", move |plugin: i32, callback: i32| {
@@ -66,20 +71,20 @@ fn main() {
             Some(p) => p,
             None => return Err(Trap::new("invalid player id")),
         };
-        let plugin_alloc = match plugin.realloc(1, 0, player.len()) {
+        let plugin_alloc = match plugin.realloc(1, 0, player.name.len()) {
             Ok(0) => return Err(Trap::new("allocation failed")),
             Ok(a) => a,
             Err(trap) => return Err(trap),
         };
         unsafe {
             let data = mem.data_unchecked_mut();
-            let string_data = match data.get_mut(plugin_alloc..).and_then(|arr| arr.get_mut(..player.len())) {
+            let string_data = match data.get_mut(plugin_alloc..).and_then(|arr| arr.get_mut(..player.name.len())) {
                 Some(d) => d,
                 None => return Err(Trap::new("string pointer out of bounds")),
             };
 
             // Copy string to wasm
-            for (dest, src) in string_data.iter_mut().zip(player.bytes()) {
+            for (dest, src) in string_data.iter_mut().zip(player.name.bytes()) {
                 *dest = src;
             }
 
@@ -97,7 +102,7 @@ fn main() {
             };
 
             // Write len pointer to ptr_out
-            *len_out_data = player.len() as u32;
+            *len_out_data = player.name.len() as u32;
         }
         Ok(())
     }).unwrap();
@@ -132,7 +137,10 @@ fn main() {
                     ..
                 } => {
                     endpoint.accept(peer_id);
-                    players_rc.insert(next_player_id, format!("{}", next_player_id));
+                    players_rc.insert(next_player_id, Player {
+                        name: format!("{}", next_player_id),
+                        peer_id,
+                    });
 
                     let listener_opt = player_join_listener.borrow()
                         .map(|callback| plugin_callback_table.get(callback))
@@ -151,6 +159,9 @@ fn main() {
                 }
                 EndpointEvent::ReceivedMessage { bytes, .. } => {
                     println!("Receied: {:?}", &*bytes);
+                    for player in players_rc.iter() {
+                        endpoint.send_message(player.peer_id, bytes.clone(), MessageOrder::Ordered);
+                    }
                 }
                 _ => {}
             }
