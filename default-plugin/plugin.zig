@@ -33,4 +33,5 @@ fn on_player_join(plugin: *api.Plugin, server: *api.Server, event: *api.Event, p
     defer allocator.free(msg);
 
     api.warn(msg.ptr, msg.len);
+    api.server_broadcast_message(server, msg.ptr, msg.len-1);
 }

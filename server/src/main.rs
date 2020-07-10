@@ -1,10 +1,8 @@
 use std::path::Path;
-
 use wasmtime::{Store, Module, Extern, Trap, Caller, Linker, Engine, Config, Val};
-
 use dashmap::DashMap;
-
 use harlequinn::{Certificate, EndpointEvent, HqEndpoint, PrivateKey, PeerId, MessageOrder};
+use bytes::Bytes;
 
 mod plugin;
 
@@ -21,6 +19,16 @@ fn main() {
     let store = Store::new(&engine);
     let module = Module::from_file(store.engine(), "plugins/default-plugin.wasm").unwrap();
     let mut linker = Linker::new(&store);
+
+    // Variables
+    let player_join_listener: std::rc::Rc<std::cell::RefCell<Option<u32>>> = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let plugins_rc: std::rc::Rc<DashMap<u32, Plugin>> = std::rc::Rc::new(DashMap::new());
+    let players_rc: std::rc::Rc<DashMap<u32, Player>> = std::rc::Rc::new(DashMap::new());
+
+    // Initialize networking...
+    let (cert, pkey) = get_certificate();
+    let socket_addr = "0.0.0.0:41800".parse().unwrap();
+    let endpoint = std::rc::Rc::new(std::cell::RefCell::new(HqEndpoint::new_server("block-place", socket_addr, cert, pkey)));
 
     linker.func("env", "warn", |caller: Caller<'_>, ptr: i32, len: i32| {
         let mem = match caller.get_export("memory") {
@@ -44,9 +52,34 @@ fn main() {
         Ok(())
     }).unwrap();
 
-    let player_join_listener: std::rc::Rc<std::cell::RefCell<Option<u32>>> = std::rc::Rc::new(std::cell::RefCell::new(None));
-    let plugins_rc: std::rc::Rc<DashMap<u32, Plugin>> = std::rc::Rc::new(DashMap::new());
-    let players_rc: std::rc::Rc<DashMap<u32, Player>> = std::rc::Rc::new(DashMap::new());
+    let players_rc_clone = std::rc::Rc::clone(&players_rc);
+    let endpoint_clone = std::rc::Rc::clone(&endpoint);
+    linker.func("env", "server_broadcast_message", move |caller: Caller<'_>, server: i32, ptr: i32, len: i32| {
+        // TODO: Check that server is correct number
+
+        let mem = match caller.get_export("memory") {
+            Some(Extern::Memory(mem)) => mem,
+            _ => return Err(Trap::new("failed to find host memory")),
+        };
+
+        unsafe {
+            let data = mem.data_unchecked()
+                .get(ptr as u32 as usize..)
+                .and_then(|arr| arr.get(..len as u32 as usize));
+            let string = match data {
+                Some(data) => match std::str::from_utf8(data) {
+                    Ok(s) => s,
+                    Err(_) => return Err(Trap::new("invalid utf-8")),
+                },
+                None => return Err(Trap::new("pointer/length out of bounds")),
+            };
+            let mut endpoint = endpoint_clone.borrow_mut();
+            for player in players_rc_clone.iter() {
+                endpoint.send_message(player.peer_id, Bytes::from(string.to_string()), MessageOrder::Ordered);
+            }
+        }
+        Ok(())
+    }).unwrap();
 
     let player_join_listener_clone = std::rc::Rc::clone(&player_join_listener);
     linker.func("env", "register_player_join_listener", move |plugin: i32, callback: i32| {
@@ -117,18 +150,14 @@ fn main() {
 
     on_enable(1234).unwrap();
 
-    // Initialize networking...
-    let (cert, pkey) = get_certificate();
-
-    let socket_addr = "0.0.0.0:41800".parse().unwrap();
-    let mut endpoint = HqEndpoint::new_server("block-place", socket_addr, cert, pkey);
-
     let mut events = Vec::new();
 
     let mut next_player_id: u32 = 1;
 
     loop {
-        endpoint.poll_events(&mut events);
+        {
+            endpoint.borrow_mut().poll_events(&mut events);
+        }
 
         for event in events.drain(..) {
             match event {
@@ -136,7 +165,7 @@ fn main() {
                     peer_id,
                     ..
                 } => {
-                    endpoint.accept(peer_id);
+                    endpoint.borrow_mut().accept(peer_id);
                     players_rc.insert(next_player_id, Player {
                         name: format!("{}", next_player_id),
                         peer_id,
@@ -159,6 +188,7 @@ fn main() {
                 }
                 EndpointEvent::ReceivedMessage { bytes, .. } => {
                     println!("Receied: {:?}", &*bytes);
+                    let mut endpoint = endpoint.borrow_mut();
                     for player in players_rc.iter() {
                         endpoint.send_message(player.peer_id, bytes.clone(), MessageOrder::Ordered);
                     }

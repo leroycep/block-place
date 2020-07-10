@@ -183,6 +183,7 @@ name = "block-place-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "dashmap",
  "harlequinn",
  "rcgen",
