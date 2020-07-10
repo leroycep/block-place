@@ -1,7 +1,17 @@
 # Block Place
 
-You need to have [pathfinder_c][] and zig installed. At the time of writing
-`pathfinder_c` is broken; see [this issue][issue374] for more details.
+- Have `cargo` and `zig` installed
 
-[pathfinder_c]: https://github.com/servo/pathfinder
-[issue374]: https://github.com/servo/pathfinder/issues/374
+```
+# Build default-plugin
+zig build
+
+# Link the plugin folder so that block-place-server will see it
+ln -s zig-cache/bin/plugins ./ 
+
+# Run the server
+cargo run -p block-place-server
+
+# In a different terminal...
+cargo run -p block-place-client
+```
