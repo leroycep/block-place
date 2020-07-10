@@ -11,8 +11,17 @@ use pathfinder_resources::fs::FilesystemResourceLoader;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::video::GLProfile;
+use harlequinn::{HqEndpoint, Certificate, EndpointEvent, MessageOrder};
+use bytes::Bytes;
 
 fn main() {
+    let mut endpoint = HqEndpoint::new_client("block-place");
+
+    let certificate_der = std::fs::read("./cert.der").unwrap();
+    let certificate = Certificate::from_der(&certificate_der).unwrap();
+    let socket_addr = "127.0.0.1:41800".parse().unwrap();
+    endpoint.connect(socket_addr, "localhost", certificate);
+
     // Set up SDL2.
     let sdl_context = sdl2::init().unwrap();
     let video = sdl_context.video().unwrap();
@@ -65,11 +74,40 @@ fn main() {
     window.gl_swap_window();
 
     // Wait for a keypress.
+    let mut hq_events = Vec::new();
     let mut event_pump = sdl_context.event_pump().unwrap();
     loop {
-        match event_pump.wait_event() {
-            Event::Quit {..} | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => return,
-            _ => {}
+        endpoint.poll_events(&mut hq_events);
+        for event in hq_events.drain(..) {
+            match event {
+                EndpointEvent::ConnectionRequested {
+                    peer_id,
+                    socket_addr,
+                    ..
+                } => {
+                    endpoint.accept(peer_id);
+                    println!("Server connected: {}", socket_addr);
+
+                    endpoint.send_message(
+                        peer_id,
+                        Bytes::from(&[1,2,3,4][..]),
+                        MessageOrder::Unordered,
+                    );
+                }
+                _ => {
+                    println!("Unknown event");
+                }
+            }
         }
+
+        for event in event_pump.poll_iter(){
+            match event {
+                Event::Quit {..} | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => return,
+                _ => {}
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
+

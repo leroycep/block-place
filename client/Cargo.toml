@@ -8,7 +8,8 @@ edition = "2018"
 
 [dependencies]
 wasmtime = "0.18"
-quinn = "0.6"
+harlequinn = "0.1"
+bytes = "0.5"
 
 font-kit = "0.6"
 gl = "0.14"
