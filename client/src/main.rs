@@ -9,7 +9,7 @@ use pathfinder_renderer::gpu::options::{DestFramebuffer, RendererMode, RendererO
 use pathfinder_renderer::gpu::renderer::Renderer;
 use pathfinder_renderer::options::BuildOptions;
 use pathfinder_resources::fs::FilesystemResourceLoader;
-use sdl2::event::Event;
+use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::video::GLProfile;
 use harlequinn::{HqEndpoint, Certificate, EndpointEvent, MessageOrder};
@@ -107,6 +107,9 @@ fn main() {
                 },
                 Event::TextInput { text, .. } => {
                     text_typed.push_str(&text);
+                    should_render = true;
+                },
+                Event::Window { win_event: WindowEvent::Exposed, .. } => {
                     should_render = true;
                 },
                 _ => {}
