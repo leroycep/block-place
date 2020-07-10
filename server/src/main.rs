@@ -83,7 +83,6 @@ fn main() {
 
     let player_join_listener_clone = std::rc::Rc::clone(&player_join_listener);
     linker.func("env", "register_player_join_listener", move |plugin: i32, callback: i32| {
-        println!("register_player_join_listener({}, {})", plugin as u32, callback as u32);
         player_join_listener_clone.replace(Some(callback as u32));
         Ok(())
     }).unwrap();
@@ -91,7 +90,6 @@ fn main() {
     let plugins_rc_clone = std::rc::Rc::clone(&plugins_rc);
     let players_rc_clone = std::rc::Rc::clone(&players_rc);
     linker.func("env", "player_name", move |caller: Caller<'_>, player: i32, plugin: i32, ptr_out: i32, len_out: i32| {
-        println!("player_name({}, {}, {}, {})", player as u32, plugin as u32, ptr_out as u32, len_out as u32);
         let mem = match caller.get_export("memory") {
             Some(Extern::Memory(mem)) => mem,
             _ => return Err(Trap::new("failed to find host memory")),
@@ -187,7 +185,6 @@ fn main() {
                     println!("Client disconnected");
                 }
                 EndpointEvent::ReceivedMessage { bytes, .. } => {
-                    println!("Receied: {:?}", &*bytes);
                     let mut endpoint = endpoint.borrow_mut();
                     for player in players_rc.iter() {
                         endpoint.send_message(player.peer_id, bytes.clone(), MessageOrder::Ordered);

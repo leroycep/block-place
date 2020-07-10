@@ -29,9 +29,9 @@ fn on_player_join(plugin: *api.Plugin, server: *api.Server, event: *api.Event, p
     const player_name = player_name_ptr[0..player_name_len];
     defer allocator.free(player_name);
 
-    const msg = std.fmt.allocPrint(allocator, "{} has joined the server!\n", .{player_name}) catch return;
+    const msg = std.fmt.allocPrint(allocator, "{} has joined the server!", .{player_name}) catch return;
     defer allocator.free(msg);
 
     api.warn(msg.ptr, msg.len);
-    api.server_broadcast_message(server, msg.ptr, msg.len-1);
+    api.server_broadcast_message(server, msg.ptr, msg.len);
 }
