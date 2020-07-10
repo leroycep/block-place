@@ -21,9 +21,14 @@ pub fn build(b: *Builder) void {
         .name = "block-place-api",
         .path = "api/api.zig",
     };
+    const zee_alloc_pkg = Pkg{
+        .name = "zee_alloc",
+        .path = "dep/zee_alloc/src/main.zig",
+    };
 
     const default_plugin_obj = std.build.LibExeObjStep.createObject(b, "default-plugin", std.build.FileSource{ .path = "default-plugin/plugin.zig" });
     default_plugin_obj.addPackage(plugin_api_pkg);
+    default_plugin_obj.addPackage(zee_alloc_pkg);
     default_plugin_obj.setBuildMode(b.standardReleaseOptions());
     default_plugin_obj.setTarget(.{ .cpu_arch = .wasm32, .os_tag = .freestanding, .cpu_features_add = std.Target.wasm.featureSet(&[_]std.Target.wasm.Feature{ .bulk_memory }) });
 

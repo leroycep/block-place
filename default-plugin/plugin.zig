@@ -1,21 +1,19 @@
 const std = @import("std");
 const api = @import("block-place-api");
+const zee_alloc = @import("zee_alloc");
 
 export const PLUGIN_INFO_NAME = "xyz.geemili.default";
 export const PLUGIN_INFO_VERSION_MAJOR: u32 = 0;
 export const PLUGIN_INFO_VERSION_MINOR: u32 = 1;
 export const PLUGIN_INFO_VERSION_PATCH: u32 = 0;
 
-pub const allocator = std.heap.page_allocator;
+pub const allocator = zee_alloc.ZeeAllocDefaults.wasm_allocator;
 
-export fn realloc(old_ptr: [*]u8, old_len: usize, new_byte_count: usize) ?[*]u8 {
-    const old_mem = old_ptr[0..old_len];
-    const new_mem = allocator.realloc(old_mem, new_byte_count) catch {
-        const msg = "OutOfMemory error!";
-        api.warn(msg, msg.len);
-        return null;
-    };
-    return new_mem.ptr;
+comptime {
+    (zee_alloc.ExportC{
+        .allocator = allocator,
+        .realloc = true,
+    }).run();
 }
 
 export fn on_enable(plugin: *api.Plugin) void {

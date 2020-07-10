@@ -102,9 +102,9 @@ fn main() {
             Some(p) => p,
             None => return Err(Trap::new("invalid player id")),
         };
-        let plugin_alloc = match plugin.realloc(1, 0, player.name.len()) {
-            Ok(0) => return Err(Trap::new("allocation failed")),
-            Ok(a) => a,
+        let plugin_alloc = match plugin.realloc(None, player.name.len()) {
+            Ok(None) => return Err(Trap::new("allocation failed")),
+            Ok(Some(a)) => a,
             Err(trap) => return Err(trap),
         };
         unsafe {
