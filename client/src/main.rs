@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use pathfinder_canvas::{Canvas, CanvasFontContext, TextAlign};
 use pathfinder_color::ColorF;
 use pathfinder_geometry::vector::{vec2f, vec2i};
@@ -57,26 +58,14 @@ fn main() {
     // Load a font.
     let font_context = CanvasFontContext::from_system_source();
 
-    // Make a canvas.
-    let mut canvas = Canvas::new(window_size.to_f32()).get_context_2d(font_context);
-
-    // Draw the text.
-    canvas.set_font_size(32.0);
-    canvas.fill_text("Hello Pathfinder!", vec2f(32.0, 48.0));
-    canvas.set_text_align(TextAlign::Right);
-    canvas.stroke_text("Goodbye Pathfinder!", vec2f(608.0, 464.0));
-
-    // Render the canvas to screen.
-    let mut scene = SceneProxy::from_scene(canvas.into_canvas().into_scene(),
-                                           renderer.mode().level,
-                                           RayonExecutor);
-    scene.build_and_render(&mut renderer, BuildOptions::default());
-    window.gl_swap_window();
+    let mut text_log: VecDeque<String> = VecDeque::new();
+    let mut text_typed = String::new();
 
     // Wait for a keypress.
     let mut hq_events = Vec::new();
     let mut event_pump = sdl_context.event_pump().unwrap();
     loop {
+        let mut should_render = false;
         endpoint.poll_events(&mut hq_events);
         for event in hq_events.drain(..) {
             match event {
@@ -94,17 +83,60 @@ fn main() {
                         MessageOrder::Unordered,
                     );
                 }
-                _ => {
-                    println!("Unknown event");
+                EndpointEvent::ReceivedMessage { ..} => {
+                    println!("Received message");
                 }
+                EndpointEvent::Disconnected {reason, ..} => {
+                    println!("Server disconnected: {}", reason.as_ref().map(|x| x.as_str()).unwrap_or("Reason unknown"));
+                }
+                _ => { }
             }
         }
 
         for event in event_pump.poll_iter(){
             match event {
                 Event::Quit {..} | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => return,
+                Event::KeyDown { keycode: Some(Keycode::Backspace), .. } => {
+                    let _ = text_typed.pop();
+                    should_render = true;
+                },
+                Event::KeyDown { keycode: Some(Keycode::Return), .. } => {
+                    text_log.push_back(text_typed.clone());
+                    text_typed.clear();
+                    should_render = true;
+                },
+                Event::TextInput { text, .. } => {
+                    text_typed.push_str(&text);
+                    should_render = true;
+                },
                 _ => {}
             }
+        }
+
+        if should_render {
+            // Make a canvas.
+            let mut canvas = Canvas::new(window_size.to_f32()).get_context_2d(font_context.clone());
+
+            // Draw the text.
+            let font_size = 32.0;
+            let line_height = font_size * 1.5;
+            canvas.set_font_size(font_size);
+            canvas.set_text_align(TextAlign::Left);
+
+            let mut y = window_size.y() as f32 - 5.0;
+            canvas.fill_text(&text_typed, vec2f(5.0, y));
+            for text in text_log.iter().rev() {
+                y -= line_height;
+                if y < 0.0 { break; }
+                canvas.fill_text(text, vec2f(5.00, y));
+            }
+
+            // Render the canvas to screen.
+            let mut scene = SceneProxy::from_scene(canvas.into_canvas().into_scene(),
+                                                   renderer.mode().level,
+                                                   RayonExecutor);
+            scene.build_and_render(&mut renderer, BuildOptions::default());
+            window.gl_swap_window();
         }
 
         std::thread::sleep(std::time::Duration::from_millis(100));
