@@ -3,6 +3,8 @@ use wasmtime::{Store, Module, Extern, Trap, Caller, Linker, Engine, Config, Val}
 use dashmap::DashMap;
 use harlequinn::{Certificate, EndpointEvent, HqEndpoint, PrivateKey, PeerId, MessageOrder};
 use bytes::Bytes;
+use block_place_shared::packets::{ServerPacket, PlayerUpdate, ClientPacket};
+use nanoserde::{SerBin, DeBin};
 
 mod plugin;
 
@@ -11,6 +13,8 @@ use plugin::Plugin;
 struct Player {
     name: String,
     peer_id: PeerId,
+    entity_id: u32,
+    pos: (f32, f32),
 }
 
 fn main() {
@@ -23,7 +27,8 @@ fn main() {
     // Variables
     let player_join_listener: std::rc::Rc<std::cell::RefCell<Option<u32>>> = std::rc::Rc::new(std::cell::RefCell::new(None));
     let plugins_rc: std::rc::Rc<DashMap<u32, Plugin>> = std::rc::Rc::new(DashMap::new());
-    let players_rc: std::rc::Rc<DashMap<u32, Player>> = std::rc::Rc::new(DashMap::new());
+    let players_rc: std::rc::Rc<DashMap<PeerId, Player>> = std::rc::Rc::new(DashMap::new());
+    let player_id_to_peer_id: std::rc::Rc<DashMap<u32, PeerId>> = std::rc::Rc::new(DashMap::new());
 
     // Initialize networking...
     let (cert, pkey) = get_certificate();
@@ -88,6 +93,7 @@ fn main() {
     }).unwrap();
 
     let plugins_rc_clone = std::rc::Rc::clone(&plugins_rc);
+    let player_id_to_peer_id_clone = std::rc::Rc::clone(&player_id_to_peer_id);
     let players_rc_clone = std::rc::Rc::clone(&players_rc);
     linker.func("env", "player_name", move |caller: Caller<'_>, player: i32, plugin: i32, ptr_out: i32, len_out: i32| {
         let mem = match caller.get_export("memory") {
@@ -98,9 +104,13 @@ fn main() {
             Some(p) => p,
             None => return Err(Trap::new("invalid plugin id")),
         };
-        let player =  match players_rc_clone.get(&(player as u32)) {
-            Some(p) => p,
+        let peer_id = match player_id_to_peer_id_clone.get(&(player as u32)) {
+            Some(peer_id) => peer_id,
             None => return Err(Trap::new("invalid player id")),
+        };
+        let player =  match players_rc_clone.get(&peer_id) {
+            Some(p) => p,
+            None => return Err(Trap::new("invalid player peer id")),
         };
         let plugin_alloc = match plugin.realloc(None, player.name.len()) {
             Ok(None) => return Err(Trap::new("allocation failed")),
@@ -151,7 +161,7 @@ fn main() {
     let mut events = Vec::new();
 
     let mut next_player_id: u32 = 1;
-
+    let mut ticks: u64 = 0;
     loop {
         {
             endpoint.borrow_mut().poll_events(&mut events);
@@ -164,10 +174,13 @@ fn main() {
                     ..
                 } => {
                     endpoint.borrow_mut().accept(peer_id);
-                    players_rc.insert(next_player_id, Player {
+                    players_rc.insert(peer_id, Player {
                         name: format!("{}", next_player_id),
                         peer_id,
+                        entity_id: next_player_id,
+                        pos: (320.0, 240.0),
                     });
+                    player_id_to_peer_id.insert(next_player_id, peer_id);
 
                     let listener_opt = player_join_listener.borrow()
                         .map(|callback| plugin_callback_table.get(callback))
@@ -178,6 +191,9 @@ fn main() {
                         let listener = listener_func.get4::<i32,i32,i32,i32,()>().unwrap();
                         listener(1234, 1, 1, next_player_id as i32).unwrap();
                     }
+
+                    let packet = ServerPacket::SetClientPlayerEntity(next_player_id).serialize_bin();
+                    endpoint.borrow_mut().send_datagram(peer_id, Bytes::from(packet));
 
                     next_player_id += 1;
                 }
@@ -190,11 +206,37 @@ fn main() {
                         endpoint.send_message(player.peer_id, bytes.clone(), MessageOrder::Ordered);
                     }
                 }
+                EndpointEvent::ReceivedDatagram { peer_id, bytes } => {
+                    if let Ok(packet) = ClientPacket::deserialize_bin(&bytes) {
+                        match packet {
+                            ClientPacket::Heartbeat => {},
+                            ClientPacket::Moved { pos_x, pos_y } => {
+                                if let Some(mut player) = players_rc.get_mut(&peer_id) {
+                                    player.pos.0 = pos_x;
+                                    player.pos.1 = pos_y;
+                                }
+                            },
+                        }
+                    }
+                }
                 _ => {}
             }
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(100))
+        {
+            let update = ServerPacket::Update {
+                ticks,
+                players: players_rc.iter().map(|p| PlayerUpdate { entity_id: p.entity_id, pos_x: p.pos.0, pos_y: p.pos.1 }).collect(),
+            };
+            let update_bytes = update.serialize_bin();
+            let mut endpoint = endpoint.borrow_mut();
+            for player in players_rc.iter() {
+                endpoint.send_datagram(player.peer_id, Bytes::from(update_bytes.clone()));
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        ticks += 1;
     }
 }
 

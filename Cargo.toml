@@ -2,6 +2,7 @@
 members = [
     "server",
     "client",
+    "shared",
 ]
 
 [patch.crates-io]

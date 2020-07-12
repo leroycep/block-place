@@ -1,7 +1,8 @@
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap, hash_map::Entry};
 use pathfinder_canvas::{Canvas, CanvasFontContext, TextAlign};
 use pathfinder_color::ColorF;
-use pathfinder_geometry::vector::{vec2f, vec2i};
+use pathfinder_geometry::vector::{Vector2F, vec2f, vec2i};
+use pathfinder_geometry::rect::RectF;
 use pathfinder_gl::{GLDevice, GLVersion};
 use pathfinder_renderer::concurrent::rayon::RayonExecutor;
 use pathfinder_renderer::concurrent::scene_proxy::SceneProxy;
@@ -10,10 +11,18 @@ use pathfinder_renderer::gpu::renderer::Renderer;
 use pathfinder_renderer::options::BuildOptions;
 use pathfinder_resources::fs::FilesystemResourceLoader;
 use sdl2::event::{Event, WindowEvent};
-use sdl2::keyboard::Keycode;
+use sdl2::keyboard::{Keycode, Scancode};
 use sdl2::video::GLProfile;
 use harlequinn::{HqEndpoint, Certificate, EndpointEvent, MessageOrder};
 use bytes::Bytes;
+use block_place_shared::packets::{ClientPacket, ServerPacket};
+use nanoserde::{SerBin, DeBin};
+
+struct PlayerEntity {
+    entity_id: u32,
+    name: String,
+    pos: Vector2F,
+}
 
 fn main() {
     let mut endpoint = HqEndpoint::new_client("block-place");
@@ -63,6 +72,10 @@ fn main() {
 
     let mut server_peer_id = None;
 
+    let mut player_entities: HashMap<u32, PlayerEntity> = HashMap::new();
+    let mut player_entity_id = 0;
+    let mut last_update_tick = 0;
+
     let mut next_hearbeat = std::time::Instant::now() + std::time::Duration::from_millis(200);
 
     // Wait for a keypress.
@@ -93,17 +106,39 @@ fn main() {
                         _ => println!("invalid utf-8"),
                     };
                 }
+                EndpointEvent::ReceivedDatagram { bytes, .. } => {
+                    if let Ok(packet) = ServerPacket::deserialize_bin(&bytes) {
+                        match packet {
+                            ServerPacket::SetClientPlayerEntity(entity_id) => player_entity_id = entity_id,
+                            ServerPacket::Update { ticks, players } => {
+                                if ticks > last_update_tick {
+                                    should_render = true;
+                                    last_update_tick = ticks;
+                                    for player in players {
+                                        match player_entities.entry(player.entity_id) {
+                                            Entry::Occupied(mut slot) => {
+                                                let entity = slot.get_mut();
+                                                entity.pos.set_x(player.pos_x);
+                                                entity.pos.set_y(player.pos_y);
+                                            }
+                                            Entry::Vacant(slot) => {
+                                                slot.insert(PlayerEntity {
+                                                    name: String::new(),
+                                                    entity_id: player.entity_id,
+                                                    pos: Vector2F::new(player.pos_x, player.pos_y),
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                        }
+                    }
+                }
                 EndpointEvent::Disconnected {reason, ..} => {
                     println!("Server disconnected: {}", reason.as_ref().map(|x| x.as_str()).unwrap_or("Reason unknown"));
                 }
                 _ => { }
-            }
-        }
-
-        if let Some(peer_id) = server_peer_id {
-            if std::time::Instant::now() >= next_hearbeat {
-                endpoint.send_datagram(peer_id, Bytes::new());
-                next_hearbeat = std::time::Instant::now() + std::time::Duration::from_millis(200);
             }
         }
 
@@ -137,9 +172,43 @@ fn main() {
             }
         }
 
+        let mut movement = Vector2F::new(0.0, 0.0);
+        if event_pump.keyboard_state().is_scancode_pressed(Scancode::Left) {
+            movement += Vector2F::new(-2.0, 0.0);
+        }
+        if event_pump.keyboard_state().is_scancode_pressed(Scancode::Right) {
+            movement += Vector2F::new(2.0, 0.0);
+        }
+        if event_pump.keyboard_state().is_scancode_pressed(Scancode::Up) {
+            movement += Vector2F::new(0.0, -2.0);
+        }
+        if event_pump.keyboard_state().is_scancode_pressed(Scancode::Down) {
+            movement += Vector2F::new(0.0, 2.0);
+        }
+        if let Some(peer_id) = server_peer_id {
+            if movement != Vector2F::zero() {
+                if let Some(player) = player_entities.get(&player_entity_id) {
+                    let new_pos = player.pos + movement;
+                    let packet = ClientPacket::Moved{pos_x: new_pos.x(), pos_y: new_pos.y()}.serialize_bin();
+                    endpoint.send_datagram(peer_id, Bytes::from(packet));
+                }
+            }
+            if std::time::Instant::now() >= next_hearbeat {
+                let packet = ClientPacket::Heartbeat.serialize_bin();
+                endpoint.send_datagram(peer_id, Bytes::from(packet));
+                next_hearbeat = std::time::Instant::now() + std::time::Duration::from_millis(200);
+            }
+        }
+
+
         if should_render {
             // Make a canvas.
             let mut canvas = Canvas::new(window_size.to_f32()).get_context_2d(font_context.clone());
+
+            // Draw players
+            for (_entity_id, player) in player_entities.iter() {
+                canvas.fill_rect(RectF::new(player.pos, Vector2F::new(32.0, 32.0)));
+            }
 
             // Draw the text.
             let font_size = 32.0;

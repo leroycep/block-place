@@ -7,9 +7,11 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+block-place-shared = { path = "../shared" }
 wasmtime = "0.18"
 harlequinn = "0.1"
 bytes = "0.5"
+nanoserde = "0.1"
 
 font-kit = "0.6"
 gl = "0.14"

@@ -161,10 +161,12 @@ dependencies = [
 name = "block-place-client"
 version = "0.1.0"
 dependencies = [
+ "block-place-shared",
  "bytes",
  "font-kit",
  "gl",
  "harlequinn",
+ "nanoserde",
  "pathfinder_canvas",
  "pathfinder_color",
  "pathfinder_content",
@@ -183,11 +185,20 @@ name = "block-place-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "block-place-shared",
  "bytes",
  "dashmap",
  "harlequinn",
+ "nanoserde",
  "rcgen",
  "wasmtime",
+]
+
+[[package]]
+name = "block-place-shared"
+version = "0.1.0"
+dependencies = [
+ "nanoserde",
 ]
 
 [[package]]
@@ -1247,6 +1258,21 @@ name = "more-asserts"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0debeb9fcf88823ea64d64e4a815ab1643f33127d995978e099942ce38f25238"
+
+[[package]]
+name = "nanoserde"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51d43fe1ec7bc65107a8cdabac6320d931811ab606f1622fe2bae7f3922552b3"
+dependencies = [
+ "nanoserde-derive",
+]
+
+[[package]]
+name = "nanoserde-derive"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90a099fda57cb4cf8b28509d194dd7f621ec9c08a990918fc3fd266a2385dd47"
 
 [[package]]
 name = "net2"
